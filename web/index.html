@@ -68,54 +68,172 @@
       </div>
     </section>
 
-    <section class="kpis" id="kpis" aria-label="Kennzahlen"></section>
+    <nav class="tabs" role="tablist" aria-label="Bereiche">
+      <button role="tab" data-tab="overview" aria-selected="true">Übersicht</button>
+      <button role="tab" data-tab="training" aria-selected="false">Training</button>
+      <button role="tab" data-tab="recovery" aria-selected="false">Regeneration</button>
+      <button role="tab" data-tab="patterns" aria-selected="false">Muster</button>
+      <button role="tab" data-tab="workouts" aria-selected="false">Workouts</button>
+    </nav>
 
-    <section class="card">
-      <div class="card-head">
-        <div>
-          <h2>Empfehlung für die nächsten 7 Tage</h2>
-          <span class="card-sub" id="plan-sub"></span>
-        </div>
-        <div class="legend"><span><span class="chip changed">angepasst</span> gegenüber Plan verändert</span></div>
-      </div>
-      <div class="days" id="days"></div>
-      <div id="day-detail"></div>
-    </section>
+    <!-- ---------- Übersicht ---------- -->
+    <div class="tab-panel" data-panel="overview">
+      <section class="kpis" id="kpis" aria-label="Kennzahlen"></section>
 
-    <div class="grid-2">
       <section class="card">
         <div class="card-head">
-          <h2>Fitness &amp; Ermüdung · 90 Tage</h2>
+          <div>
+            <h2>Deine letzten 7 Tage</h2>
+            <span class="card-sub">Schlafqualität, Erholung und Trainingsbelastung</span>
+          </div>
+          <span class="card-sub" id="week-readiness-note"></span>
+        </div>
+        <div class="table-wrap"><table id="last7"></table></div>
+        <p class="target" id="last7-note"></p>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Empfehlung für die nächsten 7 Tage</h2>
+            <span class="card-sub" id="plan-sub"></span>
+          </div>
+          <div class="legend"><span><span class="chip changed">angepasst</span> gegenüber Plan verändert</span></div>
+        </div>
+        <div class="days" id="days"></div>
+        <div id="day-detail"></div>
+      </section>
+
+      <div class="grid-2">
+        <section class="card">
+          <div class="card-head">
+            <h2>Fitness &amp; Ermüdung · 90 Tage</h2>
+            <div class="legend">
+              <span><i style="background:var(--series-1)"></i>Fitness (CTL)</span>
+              <span><i style="background:var(--series-2)"></i>Ermüdung (ATL)</span>
+              <span><i class="box" style="background:var(--bar)"></i>Tageslast (TRIMP)</span>
+            </div>
+          </div>
+          <div class="chart" id="pmc-chart"></div>
+          <p class="target" id="pmc-note"></p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Coach-Hinweise</h2><span class="card-sub">aus deinen Daten</span></div>
+          <div class="tips" id="tips"></div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ---------- Training ---------- -->
+    <div class="tab-panel" data-panel="training" hidden>
+      <div class="grid-2">
+        <section class="card">
+          <div class="card-head"><h2>VO2max</h2><span class="card-sub" id="vo2-sub"></span></div>
+          <div class="stat-row" id="vo2-stats"></div>
+          <div class="chart" id="vo2-chart"></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Belastungssteuerung</h2><span class="card-sub">akut 7 Tage · chronisch 28 Tage</span></div>
+          <div class="table-wrap"><table id="load-table"></table></div>
+          <p class="target" id="load-note"></p>
+        </section>
+      </div>
+      <div class="grid-2">
+        <section class="card">
+          <div class="card-head"><h2>Aerober &amp; anaerober Trainingseffekt</h2><span class="card-sub">letzte 4 Wochen</span></div>
+          <div class="table-wrap"><table id="te-table"></table></div>
+          <p class="target" id="te-note"></p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Pace &amp; Herzfrequenz</h2><span class="card-sub">lockere Läufe</span></div>
+          <div class="table-wrap"><table id="eff-table"></table></div>
+          <p class="target" id="eff-note"></p>
+        </section>
+      </div>
+      <div class="grid-2">
+        <section class="card">
+          <div class="card-head"><h2>Wochenumfang</h2><span class="card-sub">Minuten pro Woche</span></div>
+          <div class="chart" id="week-chart"></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Intensitätsverteilung</h2><span class="card-sub">letzte 4 Wochen, Ausdauer</span></div>
+          <div id="distribution"></div>
+        </section>
+      </div>
+      <section class="card">
+        <div class="card-head"><h2>Letzte Aktivitäten</h2><span class="card-sub" id="act-count"></span></div>
+        <div class="table-wrap"><table id="activities"></table></div>
+      </section>
+    </div>
+
+    <!-- ---------- Regeneration ---------- -->
+    <div class="tab-panel" data-panel="recovery" hidden>
+      <section class="card">
+        <div class="card-head">
+          <h2>Schlafarchitektur · 14 Nächte</h2>
           <div class="legend">
-            <span><i style="background:var(--series-1)"></i>Fitness (CTL)</span>
-            <span><i style="background:var(--series-2)"></i>Ermüdung (ATL)</span>
-            <span><i class="box" style="background:var(--bar)"></i>Tageslast (TRIMP)</span>
+            <span><i class="box" style="background:var(--stage-deep)"></i>Tiefschlaf</span>
+            <span><i class="box" style="background:var(--stage-light)"></i>Leichtschlaf</span>
+            <span><i class="box" style="background:var(--stage-rem)"></i>REM</span>
+            <span><i class="box" style="background:var(--stage-awake)"></i>Wach</span>
           </div>
         </div>
-        <div class="chart" id="pmc-chart"></div>
-        <p class="target" id="pmc-note"></p>
+        <div class="chart" id="sleep-chart"></div>
+        <div class="table-wrap"><table id="sleep-table"></table></div>
       </section>
+      <div class="grid-2">
+        <section class="card">
+          <div class="card-head"><h2>HRV-Verlauf</h2><span class="card-sub" id="hrv-sub"></span></div>
+          <div class="chart" id="hrv-chart"></div>
+          <p class="target" id="hrv-note"></p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Ruhepuls · Atemfrequenz · Body Battery</h2><span class="card-sub">letzte 7 Nächte</span></div>
+          <div class="table-wrap"><table id="vitals-table"></table></div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ---------- Muster ---------- -->
+    <div class="tab-panel" data-panel="patterns" hidden>
+      <div class="grid-2">
+        <section class="card">
+          <div class="card-head"><h2>Illness-Score</h2><span class="card-sub">Frühwarnung aus Nachtwerten</span></div>
+          <div id="illness"></div>
+          <div class="chart" id="illness-chart"></div>
+          <p class="target" id="illness-note"></p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Wöchentliche Bereitschaft</h2><span class="card-sub">HRV 40 % · Schlaf 35 % · akuter Trainingsstress 25 %</span></div>
+          <div class="table-wrap"><table id="readiness-table"></table></div>
+          <p class="target" id="readiness-note"></p>
+        </section>
+      </div>
       <section class="card">
-        <div class="card-head"><h2>Tipps</h2><span class="card-sub">aus deinen Daten</span></div>
-        <div class="tips" id="tips"></div>
+        <div class="card-head"><h2>Zusammenhänge</h2><span class="card-sub">letzte 8 Wochen</span></div>
+        <div class="table-wrap"><table id="pattern-table"></table></div>
+        <p class="target" id="pattern-note"></p>
       </section>
     </div>
 
-    <div class="grid-2">
+    <!-- ---------- Workouts ---------- -->
+    <div class="tab-panel" data-panel="workouts" hidden>
       <section class="card">
-        <div class="card-head"><h2>Wochenumfang</h2><span class="card-sub">Minuten pro Woche</span></div>
-        <div class="chart" id="week-chart"></div>
-      </section>
-      <section class="card">
-        <div class="card-head"><h2>Intensitätsverteilung</h2><span class="card-sub">letzte 4 Wochen, Ausdauer</span></div>
-        <div id="distribution"></div>
+        <div class="card-head">
+          <div>
+            <h2>Strukturiertes Workout</h2>
+            <span class="card-sub">aus der Empfehlung erstellt, Pulsbereiche aus deinem Profil</span>
+          </div>
+          <select id="workout-day" class="btn" aria-label="Tag auswählen"></select>
+        </div>
+        <div id="workout-preview"></div>
+        <div class="live-controls" style="margin-top:16px">
+          <button class="btn primary" id="workout-send">An Garmin Connect senden</button>
+          <button class="btn" id="workout-fit">Als FIT-Datei herunterladen</button>
+        </div>
+        <p class="target" id="workout-note"></p>
       </section>
     </div>
-
-    <section class="card">
-      <div class="card-head"><h2>Letzte Aktivitäten</h2><span class="card-sub" id="act-count"></span></div>
-      <div class="table-wrap"><table id="activities"></table></div>
-    </section>
   </main>
 
   <footer id="footer"></footer>

@@ -4,6 +4,7 @@ Liefert die Oberfläche aus ``web/`` aus und stellt eine kleine API bereit:
 
   GET  /api/data   gespeicherte Garmin-Daten (data/garmin.json)
   POST /api/sync   Daten neu aus Garmin Connect laden
+  POST /api/workout  Workout an Garmin Connect senden und im Kalender einplanen
   GET  /api/plan   Trainingsplan (data/plan.json)
   PUT  /api/plan   Trainingsplan speichern
 
@@ -63,6 +64,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self) -> None:
+        if self.path == "/api/workout":
+            return self._post_workout()
         if self.path != "/api/sync":
             return self._json(HTTPStatus.NOT_FOUND, {"error": "Unbekannter Endpunkt"})
         try:
@@ -79,6 +82,23 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(HTTPStatus.BAD_GATEWAY, {"error": f"Garmin Connect nicht erreichbar: {exc}"})
         finally:
             _sync_lock.release()
+
+    def _post_workout(self) -> None:
+        try:
+            body = self._read_json()
+            workout = body["workout"]
+            if not isinstance(workout, dict) or not workout.get("workoutSegments"):
+                raise ValueError("Workout ohne Schritte")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return self._json(HTTPStatus.BAD_REQUEST, {"error": "Ungültiges Workout"})
+        try:
+            return self._json(HTTPStatus.OK, garmin_sync.send_workout(workout, body.get("date")))
+        except garmin_sync.SyncError as exc:
+            return self._json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+        except ValueError as exc:
+            return self._json(HTTPStatus.BAD_REQUEST, {"error": f"Ungültiges Datum: {exc}"})
+        except Exception as exc:
+            return self._json(HTTPStatus.BAD_GATEWAY, {"error": f"Garmin Connect nicht erreichbar: {exc}"})
 
     def do_PUT(self) -> None:
         if self.path != "/api/plan":

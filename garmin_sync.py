@@ -89,8 +89,11 @@ def _activity(raw: dict) -> dict:
         "avgHr": raw.get("averageHR"),
         "maxHr": raw.get("maxHR"),
         "elevationM": round(raw.get("elevationGain") or 0),
+        "avgSpeed": raw.get("averageSpeed"),
         "aerobicTE": raw.get("aerobicTrainingEffect"),
         "anaerobicTE": raw.get("anaerobicTrainingEffect"),
+        "trainingLoad": raw.get("activityTrainingLoad"),
+        "vo2max": raw.get("vO2MaxValue"),
         "source": "garmin",
     }
 
@@ -101,19 +104,46 @@ def _daily(client, day: date) -> dict:
 
     hrv = _safe(client.get_hrv_data, iso) or {}
     summary = hrv.get("hrvSummary") or {}
+    baseline = summary.get("baseline") or {}
     entry["hrv"] = summary.get("lastNightAvg")
+    entry["hrvWeeklyAvg"] = summary.get("weeklyAvg")
+    entry["hrvStatus"] = summary.get("status")
+    if baseline.get("balancedLow") and baseline.get("balancedUpper"):
+        entry["hrvBaseline"] = [baseline["balancedLow"], baseline["balancedUpper"]]
 
     sleep = (_safe(client.get_sleep_data, iso) or {}).get("dailySleepDTO") or {}
     if sleep.get("sleepTimeSeconds"):
         entry["sleepHours"] = round(sleep["sleepTimeSeconds"] / 3600, 2)
+        for key, field in (("deep", "deepSleepSeconds"), ("rem", "remSleepSeconds"),
+                           ("light", "lightSleepSeconds"), ("awake", "awakeSleepSeconds")):
+            if sleep.get(field) is not None:
+                entry.setdefault("sleepStages", {})[key] = round(sleep[field] / 60)
     score = ((sleep.get("sleepScores") or {}).get("overall") or {}).get("value")
     if score is not None:
         entry["sleepScore"] = score
+    entry["respiration"] = sleep.get("averageRespirationValue")
 
     stats = _safe(client.get_stats, iso) or {}
     entry["restingHr"] = stats.get("restingHeartRate")
     entry["bodyBattery"] = stats.get("bodyBatteryHighestValue")
+    entry["bodyBatteryLow"] = stats.get("bodyBatteryLowestValue")
+    entry["bodyBatteryCharged"] = stats.get("bodyBatteryChargedValue")
+    entry["stress"] = stats.get("averageStressLevel")
     return {k: v for k, v in entry.items() if v is not None}
+
+
+def _vo2max_series(client, start: date, end: date) -> list[dict]:
+    """VO2max-Verlauf (Tageswerte), soweit Garmin ihn liefert."""
+    raw = _safe(client.get_max_metrics_range, start.isoformat(), end.isoformat()) or []
+    entries = raw if isinstance(raw, list) else raw.get("maxMetrics") or raw.get("allMetrics") or []
+    series = []
+    for e in entries:
+        generic = (e or {}).get("generic") or {}
+        value = generic.get("vo2MaxPreciseValue") or generic.get("vo2MaxValue")
+        day = generic.get("calendarDate") or (e or {}).get("calendarDate")
+        if value and day:
+            series.append({"date": day[:10], "vo2max": round(float(value), 1)})
+    return sorted(series, key=lambda x: x["date"])
 
 
 def _profile(client, activities: list[dict]) -> dict:
@@ -145,17 +175,38 @@ def sync(days: int = 120, interactive: bool = False) -> dict:
     print(f"Lade Erholungswerte der letzten {daily_days} Tage …", file=sys.stderr)
     daily = [_daily(client, end - timedelta(days=i)) for i in range(daily_days - 1, -1, -1)]
 
+    vo2max = _vo2max_series(client, start, end)
+
     data = {
         "source": "garmin",
         "syncedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "profile": _profile(client, activities),
         "activities": activities,
         "daily": daily,
+        "vo2max": vo2max,
     }
     DATA_FILE.parent.mkdir(exist_ok=True)
     DATA_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"{len(activities)} Aktivitäten gespeichert in {DATA_FILE}", file=sys.stderr)
     return data
+
+
+def send_workout(workout: dict, schedule_date: str | None = None) -> dict:
+    """Lädt ein Workout (Garmin-Connect-JSON) hoch und plant es optional im Kalender ein.
+
+    Die Uhr übernimmt geplante Workouts bei der nächsten Synchronisation mit Garmin Connect.
+    """
+    client = _client(interactive=False)
+    created = client.upload_workout(workout)
+    workout_id = created.get("workoutId")
+    if not workout_id:
+        raise SyncError("Garmin Connect hat das Workout nicht angenommen.")
+    result = {"workoutId": workout_id, "scheduled": None}
+    if schedule_date:
+        date.fromisoformat(schedule_date)  # wirft ValueError bei ungültigem Datum
+        client.schedule_workout(workout_id, schedule_date)
+        result["scheduled"] = schedule_date
+    return result
 
 
 def main() -> None:

@@ -3,14 +3,19 @@ import {
   DEFAULT_PLAN, INTENSITIES, SPORTS,
 } from "./analysis.js";
 import { demoData } from "./demo.js";
-import { pmcChart, weekChart, sparkline } from "./charts.js";
+import { pmcChart, weekChart, sparkline, lineChart, stackedBars } from "./charts.js";
 import { connectHeartRate } from "./bluetooth.js";
-import { parseFitFile } from "./fit-import.js";
+import { parseFitFile, loadFitSdk } from "./fit-import.js";
+import * as I from "./insights.js";
+import { buildWorkout, toGarminWorkout, encodeFitWorkout, totalSeconds } from "./workouts.js";
 import { cite } from "./sources.js";
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const num = (x, d = 0) => (Number.isFinite(x) ? x.toFixed(d).replace(".", ",") : "–");
+const num = (x, d = 0) => (Number.isFinite(x) ? x.toFixed(d).replace(".", ",").replace(/^-/, "−") : "–");
+const signed = (x, d = 1) => (Number.isFinite(x) ? `${x > 0 ? "+" : ""}${num(x, d)}` : "–");
+const pct = (x) => (Number.isFinite(x) ? `${Math.round(x * 100)} %` : "–");
+const cites = (src) => [].concat(src || []).map(cite).join(" ");
 const fmtDay = (k, opts = { weekday: "short", day: "2-digit", month: "2-digit" }) =>
   new Date(`${k}T12:00:00`).toLocaleDateString("de-DE", opts);
 const fmtDuration = (sec) => {
@@ -120,8 +125,14 @@ function render() {
   $("#pmc-note").innerHTML = `Fitness = 42-Tage-, Ermüdung = 7-Tage-Mittel der Belastung; Form = Fitness − Ermüdung. ${cite("banister")}`;
   weekChart($("#week-chart"), a.weeks);
   renderDistribution(a);
-  renderTips(a);
+  renderTips(a, data);
   renderActivities(data.activities, a.profile);
+  renderLast7(data, a);
+  renderTraining(data, a);
+  renderRecovery(data, a);
+  renderPatterns(data, a);
+  renderWorkouts();
+  state.merged = data;
 }
 
 function renderHeader(data, a, today) {
@@ -173,6 +184,13 @@ function renderKpis(a) {
     kpi({ label: "Form (TSB)", value: num(tsb), status: tsbStatus[0], statusText: tsbStatus[1], note: `Training Stress Balance · ${cite("banister")}` }),
     kpi({ label: "Fitness (CTL)", value: num(a.ctl), note: `${ctlDelta >= 0 ? "+" : ""}${num(ctlDelta, 1)} ggü. Vorwoche · Chronic Training Load` }),
     kpi({ label: "Ermüdung (ATL)", value: num(a.atl), note: "Acute Training Load, 7 Tage" }),
+    kpi({
+      label: "Wochen-Readiness",
+      value: a.weeklyReadiness?.score ?? "–",
+      status: a.weeklyReadiness ? { good: "good", normal: "warn", low: "critical" }[a.weeklyReadiness.status] : "",
+      statusText: a.weeklyReadiness ? { good: "Gut erholt", normal: "Mittel", low: "Erholungsdefizit" }[a.weeklyReadiness.status] : "",
+      note: "Ø der letzten 7 Tage aus HRV, Schlaf und Trainingsstress",
+    }),
     kpi({ label: "Belastungsverhältnis", value: num(ratio, 2), status: ratioStatus[0], statusText: ratioStatus[1], note: `ACWR (Acute:Chronic Workload Ratio) · ${cite("gabbett")}` }),
   ].join("");
 }
@@ -231,11 +249,11 @@ function renderDistribution(a) {
     <p class="target">Orientierung: rund 80 % locker, 20 % moderat und intensiv (polarisiertes Training). ${cite("seiler")}</p>`;
 }
 
-function renderTips(a) {
-  const list = tips(a);
+function renderTips(a, data) {
+  const list = [...I.insightTips(data, a), ...tips(a)];
   const level = { warn: "critical", info: "info", good: "good" };
   $("#tips").innerHTML = list.length
-    ? list.map((t) => `<div class="tip"><span class="dot ${level[t.level]}"></span><div class="tip-title">${t.title}</div><div class="tip-text">${t.text} ${cite(t.source)}</div></div>`).join("")
+    ? list.map((t) => `<div class="tip"><span class="dot ${level[t.level]}"></span><div class="tip-title">${t.title}</div><div class="tip-text">${t.text} ${cites(t.source)}</div></div>`).join("")
     : `<p class="hint">Alles im grünen Bereich – weiter so.</p>`;
 }
 
@@ -251,7 +269,7 @@ function renderActivities(activities, p) {
   const recent = activities.slice(-12).reverse();
   $("#act-count").textContent = `${activities.length} Aktivitäten geladen`;
   $("#activities").innerHTML = `
-    <thead><tr><th>Datum</th><th>Aktivität</th><th>Dauer</th><th>Distanz</th><th>Ø Puls</th><th>Belastung</th><th>Schwerpunkt</th></tr></thead>
+    <thead><tr><th>Datum</th><th>Aktivität</th><th>Dauer</th><th>Distanz</th><th>Ø Puls</th><th>Belastung</th><th>TE aerob/anaerob</th><th>Schwerpunkt</th></tr></thead>
     <tbody>${recent.map((act) => {
       const split = intensitySplit(act, p);
       const total = split[0] + split[1] + split[2] || 1;
@@ -262,10 +280,219 @@ function renderActivities(activities, p) {
         <td>${fmtDuration(act.durationSec)}</td>
         <td>${act.distanceM ? `${num(act.distanceM / 1000, 1)} km` : "–"}</td>
         <td>${act.avgHr ? `${act.avgHr} bpm` : "–"}</td>
-        <td>${Math.round(trimp(act, p))}</td>
+        <td>${Math.round(trimp(act, p))}${act.trainingLoad ? `<span class="sub">Garmin ${act.trainingLoad}</span>` : ""}</td>
+        <td>${act.aerobicTE != null ? `${num(act.aerobicTE, 1)} / ${num(act.anaerobicTE ?? 0, 1)}` : "–"}</td>
         <td>${act.avgHr || act.intensitySec ? main : "–"}</td>
       </tr>`;
     }).join("")}</tbody>`;
+}
+
+// ---------- Übersicht: letzte 7 Tage ----------
+
+const HRV_STATUS = { BALANCED: ["good", "ausgeglichen"], UNBALANCED: ["warn", "unausgeglichen"], LOW: ["serious", "niedrig"], POOR: ["critical", "schlecht"] };
+const scoreDot = (v) => (v == null ? "" : `<span class="dot ${v >= 70 ? "good" : v >= 50 ? "warn" : "critical"}"></span>`);
+
+function renderLast7(data, a) {
+  const rows = I.last7Days(data, a);
+  const hasGarminLoad = rows.some((r) => r.garminLoad);
+  $("#last7").innerHTML = `
+    <thead><tr><th>Tag</th><th class="num">Schlaf</th><th class="num">Score</th><th class="num">Tief / REM</th><th class="num">HRV</th><th class="num">Ruhepuls</th><th class="num">Body Battery</th><th class="num">Belastung</th><th>Training</th><th class="num">Readiness</th></tr></thead>
+    <tbody>${rows.map((r) => {
+      const st = HRV_STATUS[r.hrvStatus];
+      return `<tr>
+        <td>${r.date === a.todayKey ? "Heute" : fmtDay(r.date)}</td>
+        <td class="num">${r.sleepHours ? `${num(r.sleepHours, 1)} h` : "–"}</td>
+        <td class="num">${r.sleepScore != null ? `${scoreDot(r.sleepScore)} ${r.sleepScore}` : "–"}</td>
+        <td class="num">${r.deepPct != null ? `${pct(r.deepPct)} / ${pct(r.remPct)}` : "–"}</td>
+        <td class="num">${r.hrv ? `${r.hrv} ms` : "–"}${st ? `<span class="sub"><span class="dot ${st[0]}"></span> ${st[1]}</span>` : ""}</td>
+        <td class="num">${r.restingHr ? `${r.restingHr} bpm` : "–"}</td>
+        <td class="num">${r.bodyBattery ?? "–"}</td>
+        <td class="num">${Math.round(r.trimp)}${hasGarminLoad && r.garminLoad ? `<span class="sub">Garmin ${r.garminLoad}</span>` : ""}</td>
+        <td>${r.sessions.length ? esc(r.sessions.join(", ")) : '<span class="sub">Ruhetag</span>'}</td>
+        <td class="num">${r.readiness != null ? `${scoreDot(r.readiness)} ${r.readiness}` : "–"}</td>
+      </tr>`;
+    }).join("")}</tbody>`;
+  const w = a.weeklyReadiness;
+  $("#week-readiness-note").textContent = w ? `Wochen-Readiness ${w.score}/100` : "";
+  $("#last7-note").innerHTML = `Belastung = TRIMP (Training Impulse) ${cite("banister")}${hasGarminLoad ? ", darunter Garmins eigene Trainingslast" : ""}. Readiness = HRV 40 %, Schlaf 35 %, akuter Trainingsstress 25 % ${cite("plews")}`;
+}
+
+// ---------- Training ----------
+
+function renderTraining(data, a) {
+  const v = I.vo2maxTrend(data, a.todayKey);
+  if (v) {
+    const delta = (x) => (x == null ? "–" : `<span class="${x >= 0 ? "delta-up" : "delta-down"}">${signed(x)}</span>`);
+    $("#vo2-stats").innerHTML = `
+      <div><strong>${num(v.latest, 1)}</strong><span>ml/kg/min aktuell</span></div>
+      <div><strong>${delta(v.delta28)}</strong><span>4 Wochen</span></div>
+      <div><strong>${delta(v.delta84)}</strong><span>12 Wochen</span></div>`;
+    $("#vo2-sub").textContent = "Schätzung der Uhr";
+    lineChart($("#vo2-chart"), v.series.map((x) => ({ date: x.date, value: x.vo2max })), { label: "VO2max", decimals: 1 });
+  } else {
+    $("#vo2-stats").innerHTML = "";
+    $("#vo2-chart").innerHTML = '<p class="hint">Keine VO2max-Werte vorhanden (nach Synchronisation mit Garmin Connect verfügbar).</p>';
+  }
+
+  const g = I.garminLoad(state.activities, a.todayKey);
+  const rowFor = (label, acute, chronic, ratio, note) => `<tr><td>${label}<span class="sub">${note}</span></td><td class="num">${Math.round(acute)}</td><td class="num">${Math.round(chronic)}</td><td class="num">${num(ratio, 2)}</td></tr>`;
+  const trimpAcute = a.fullModel.slice(-7).reduce((s, d) => s + d.load, 0);
+  const trimpChronic = a.fullModel.slice(-28).reduce((s, d) => s + d.load, 0) / 4;
+  $("#load-table").innerHTML = `<thead><tr><th>Maß</th><th class="num">Akut</th><th class="num">Chronisch (Ø Woche)</th><th class="num">Verhältnis</th></tr></thead><tbody>
+    ${rowFor("TRIMP", trimpAcute, trimpChronic, a.acwr, "pulsbasiert")}
+    ${g ? rowFor("Garmin-Trainingslast", g.acute, g.chronic, g.ratio, "EPOC-basiert, von der Uhr") : ""}
+    <tr><td>Form (TSB)<span class="sub">Fitness − Ermüdung</span></td><td class="num" colspan="3">${num(a.tsb)}</td></tr>
+    <tr><td>Monotonie<span class="sub">Ø / SD der Tageslast, 7 Tage</span></td><td class="num" colspan="3">${num(a.monotony, 2)}</td></tr></tbody>`;
+  $("#load-note").innerHTML = `Verhältnis 0,8–1,3 gilt als günstiger Bereich, über 1,5 steigt das Verletzungsrisiko ${cite("gabbett")}. Monotonie über 2 gilt als Risikofaktor ${cite("foster")}.`;
+
+  const te = I.trainingEffects(state.activities, a.todayKey);
+  $("#te-table").innerHTML = te
+    ? `<thead><tr><th>Kennzahl</th><th class="num">Aerob</th><th class="num">Anaerob</th></tr></thead><tbody>
+      <tr><td>Ø Trainingseffekt (0–5)</td><td class="num">${num(te.aerobic, 1)}</td><td class="num">${num(te.anaerobic, 1)}</td></tr>
+      <tr><td>Einheiten mit verbessernder Wirkung</td><td class="num">${te.aerobicImproving} (≥ 3,0)</td><td class="num">${te.anaerobicImproving} (≥ 2,0)</td></tr>
+      <tr><td>Einheiten im Überlastbereich (≥ 4,5)</td><td class="num" colspan="2">${te.overreaching} von ${te.count}</td></tr></tbody>`
+    : "";
+  $("#te-note").innerHTML = te
+    ? "Trainingseffekt nach Garmins eigener Skala (0 = kein Effekt, 5 = überlastend). Anaerobe Reize entstehen v. a. durch kurze, harte Intervalle."
+    : '<span class="hint">Keine Trainingseffekt-Werte vorhanden (nach Synchronisation mit Garmin Connect verfügbar).</span>';
+
+  const eff = I.runEfficiency(state.activities, a.profile, a.todayKey);
+  const paceFmt = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")} /km`;
+  if (eff) {
+    const col = (b) => (b ? [paceFmt(b.pace), `${Math.round(b.hr)} bpm`, num(b.ef, 2), b.n] : ["–", "–", "–", 0]);
+    const [n, p] = [col(eff.now), col(eff.before)];
+    $("#eff-table").innerHTML = `<thead><tr><th>Kennzahl</th><th class="num">Letzte 4 Wochen</th><th class="num">4 Wochen davor</th></tr></thead><tbody>
+      <tr><td>Ø Pace</td><td class="num">${n[0]}</td><td class="num">${p[0]}</td></tr>
+      <tr><td>Ø Herzfrequenz</td><td class="num">${n[1]}</td><td class="num">${p[1]}</td></tr>
+      <tr><td>Effizienz<span class="sub">Meter pro Minute je Herzschlag</span></td><td class="num">${n[2]}</td><td class="num">${p[2]}</td></tr>
+      <tr><td>Läufe</td><td class="num">${n[3]}</td><td class="num">${p[3]}</td></tr></tbody>`;
+    $("#eff-note").textContent = eff.change != null
+      ? `Effizienz ${eff.change >= 0 ? "gestiegen" : "gesunken"}: ${signed(eff.change * 100)} %. Steigende Werte bedeuten: gleiches Tempo bei niedrigerem Puls.`
+      : "Für einen Vergleich fehlen Läufe aus den Vorwochen.";
+  } else {
+    $("#eff-table").innerHTML = "";
+    $("#eff-note").textContent = "Keine lockeren Läufe mit Pace und Puls in den letzten 4 Wochen.";
+  }
+}
+
+// ---------- Regeneration ----------
+
+const STAGES = [
+  { key: "deep", label: "Tiefschlaf", color: "var(--stage-deep)" },
+  { key: "light", label: "Leichtschlaf", color: "var(--stage-light)" },
+  { key: "rem", label: "REM", color: "var(--stage-rem)" },
+  { key: "awake", label: "Wach", color: "var(--stage-awake)" },
+];
+
+function renderRecovery(data, a) {
+  const daily = data.daily || [];
+  const s = I.sleepArchitecture(daily, a.todayKey);
+  if (s) {
+    stackedBars($("#sleep-chart"), s.nights.map((d) => ({ date: d.date, values: d.sleepStages })), STAGES);
+    $("#sleep-table").innerHTML = `<thead><tr><th>Ø Schlaf</th><th class="num">Dauer</th><th class="num">Tiefschlaf</th><th class="num">REM</th></tr></thead><tbody>
+      <tr><td>Letzte 7 Nächte</td><td class="num">${num(s.last7.hours, 1)} h</td><td class="num">${pct(s.last7.deep)}</td><td class="num">${pct(s.last7.rem)}</td></tr>
+      <tr><td>Dein 4-Wochen-Mittel</td><td class="num">${num(s.avg.hours, 1)} h</td><td class="num">${pct(s.avg.deep)}</td><td class="num">${pct(s.avg.rem)}</td></tr></tbody>`;
+  } else {
+    $("#sleep-chart").innerHTML = '<p class="hint">Keine Schlafphasen vorhanden (nach Synchronisation mit Garmin Connect verfügbar).</p>';
+    $("#sleep-table").innerHTML = "";
+  }
+
+  const hrvSeries = daily.filter((d) => d.hrv && d.date >= addDays(a.todayKey, -27)).map((d) => ({ date: d.date, value: d.hrv }));
+  const latest = daily.filter((d) => d.hrv).at(-1);
+  const band = latest?.hrvBaseline;
+  lineChart($("#hrv-chart"), hrvSeries, { label: "HRV", unit: " ms", band, color: "var(--series-1)" });
+  const st = HRV_STATUS[latest?.hrvStatus];
+  $("#hrv-sub").textContent = latest ? `Status: ${st ? st[1] : "–"}${latest.hrvWeeklyAvg ? ` · 7-Tage-Ø ${latest.hrvWeeklyAvg} ms` : ""}` : "";
+  $("#hrv-note").innerHTML = `${band ? "Fläche = dein Normalbereich laut Garmin. " : ""}Entscheidend ist der Trend im Vergleich zum eigenen Normalbereich, nicht der Absolutwert. ${cite("plews")}`;
+
+  const last = daily.filter((d) => d.date <= a.todayKey).slice(-7).reverse();
+  const base = daily.filter((d) => d.date < addDays(a.todayKey, -1)).slice(-28);
+  const avg = (k) => {
+    const xs = base.map((d) => d[k]).filter((x) => x != null);
+    return xs.length ? xs.reduce((m, x) => m + x, 0) / xs.length : NaN;
+  };
+  const dev = (v, k, d = 0, inv = false) => {
+    const diff = v - avg(k);
+    if (!Number.isFinite(diff) || Math.abs(diff) < (d ? 0.5 : 2)) return "";
+    const bad = inv ? diff < 0 : diff > 0;
+    return `<span class="sub ${bad ? "delta-down" : "delta-up"}">${signed(diff, d)}</span>`;
+  };
+  $("#vitals-table").innerHTML = `<thead><tr><th>Nacht</th><th class="num">Ruhepuls</th><th class="num">Atemfrequenz</th><th class="num">Body Battery</th><th class="num">Stress</th></tr></thead><tbody>
+    ${last.map((d) => `<tr>
+      <td>${d.date === a.todayKey ? "Heute" : fmtDay(d.date)}</td>
+      <td class="num">${d.restingHr ? `${d.restingHr} bpm${dev(d.restingHr, "restingHr")}` : "–"}</td>
+      <td class="num">${d.respiration ? `${num(d.respiration, 1)} /min${dev(d.respiration, "respiration", 1)}` : "–"}</td>
+      <td class="num">${d.bodyBattery != null ? `${d.bodyBatteryLow ?? "–"} → ${d.bodyBattery}${dev(d.bodyBattery, "bodyBattery", 0, true)}` : "–"}</td>
+      <td class="num">${d.stress ?? "–"}</td></tr>`).join("")}</tbody>`;
+}
+
+// ---------- Muster ----------
+
+function renderPatterns(data, a) {
+  const ill = I.illnessScore(data.daily || [], a.todayKey);
+  if (ill) {
+    const [cls, text] = { high: ["critical", "Erhöht – Warnmuster"], elevated: ["warn", "Leicht erhöht"], normal: ["good", "Unauffällig"] }[ill.level];
+    const color = { critical: "var(--critical)", warn: "var(--warn)", good: "var(--good)" }[cls];
+    $("#illness").innerHTML = `<div class="big-score"><div class="ring" style="--v:${ill.score};--ring-color:${color}"><span>${ill.score}</span></div>
+      <div><div class="status"><span class="dot ${cls}"></span>${text}</div><div class="kpi-note">${ill.reasons.length ? esc(ill.reasons.join(" · ")) : "Alle Nachtwerte im persönlichen Normalbereich"}</div></div></div>`;
+    lineChart($("#illness-chart"), ill.series.map((x) => ({ date: x.date, value: Math.round(x.points) })), { label: "Punkte", color: "var(--series-2)", height: 140 });
+  } else {
+    $("#illness").innerHTML = '<p class="hint">Für den Illness-Score werden mindestens 7 Nächte mit Ruhepuls, HRV oder Atemfrequenz benötigt.</p>';
+    $("#illness-chart").innerHTML = "";
+  }
+  $("#illness-note").innerHTML = `Punkte aus Abweichungen vom eigenen Normalbereich: Ruhepuls ↑ ${cites(["radin", "mishra"])}, Atemfrequenz ↑ ${cite("miller")}, HRV ↓ ${cite("plews")}, Schlafscore ↓. Frühwarnhinweis, keine Diagnose.`;
+
+  $("#readiness-table").innerHTML = `<thead><tr><th>Tag</th><th class="num">HRV</th><th class="num">Schlaf</th><th class="num">Trainingsstress</th><th class="num">Readiness</th></tr></thead><tbody>
+    ${a.readinessWeek.map((r) => `<tr><td>${r.date === a.todayKey ? "Heute" : fmtDay(r.date)}</td>
+      <td class="num">${num(r.parts?.hrv)}</td><td class="num">${num(r.parts?.sleep)}</td><td class="num">${num(r.parts?.load)}</td>
+      <td class="num">${r.score != null ? `${scoreDot(r.score)} <b>${r.score}</b>` : "–"}</td></tr>`).join("")}
+    ${a.weeklyReadiness ? `<tr><td><b>Woche</b></td><td colspan="3"></td><td class="num">${scoreDot(a.weeklyReadiness.score)} <b>${a.weeklyReadiness.score}</b></td></tr>` : ""}</tbody>`;
+  $("#readiness-note").innerHTML = `Teilwerte 0–100. HRV im Vergleich zum 28-Tage-Normalbereich ${cite("plews")}, Schlafscore der Uhr, Trainingsstress aus der Form (TSB) ${cite("banister")}. Unter 50: Erholung priorisieren.`;
+
+  const pat = I.patterns(data, a);
+  const rows = [];
+  if (pat.sleepPerformance) {
+    const { good, poor, cut } = pat.sleepPerformance;
+    rows.push(`<tr><td>Schlafscore ≥ ${cut} vor dem Lauf</td><td class="num">${signed(good.rel * 100)} %</td><td class="num">${num(good.te, 1)}</td><td class="num">${good.n}</td></tr>`);
+    rows.push(`<tr><td>Schlafscore &lt; ${cut} vor dem Lauf</td><td class="num">${signed(poor.rel * 100)} %</td><td class="num">${num(poor.te, 1)}</td><td class="num">${poor.n}</td></tr>`);
+  }
+  $("#pattern-table").innerHTML = `<thead><tr><th>Zusammenhang</th><th class="num">Effizienz ggü. Ø</th><th class="num">Ø aerober TE</th><th class="num">n</th></tr></thead><tbody>
+    ${rows.join("") || '<tr><td colspan="4" class="hint">Zu wenige Läufe mit Schlafdaten für einen Vergleich.</td></tr>'}
+    ${pat.loadHrv ? `<tr><td>HRV nach Tagen mit hoher Belastung<span class="sub">oberstes Viertel, TRIMP ≥ ${Math.round(pat.loadHrv.q3)}</span></td><td class="num" colspan="2">${signed(pat.loadHrv.high.rel * 100)} % ggü. Ø</td><td class="num">${pat.loadHrv.high.n}</td></tr>` : ""}
+    ${pat.sleepHrv ? `<tr><td>Korrelation Schlafscore ↔ HRV derselben Nacht</td><td class="num" colspan="2">r = ${num(pat.sleepHrv.r, 2)}</td><td class="num">${pat.sleepHrv.n}</td></tr>` : ""}</tbody>`;
+  $("#pattern-note").innerHTML = `Effizienz = Tempo je Herzschlag, verglichen mit Läufen gleicher Intensität. |r| &lt; 0,3 gilt als schwacher Zusammenhang. Schlafmangel kann Ausdauerleistung und Erholung beeinträchtigen ${cite("fullagar")}. Zusammenhänge sind Beobachtungen, keine Kausalbeweise.`;
+}
+
+// ---------- Workouts ----------
+
+const STEP_LABEL = { warmup: "Aufwärmen", interval: "Belastung", recovery: "Erholung", cooldown: "Auslaufen" };
+const STEP_COLOR = { warmup: "var(--int-low)", interval: "var(--series-1)", recovery: "var(--int-low)", cooldown: "var(--int-low)" };
+
+function currentWorkout() {
+  const day = state.days?.[Number($("#workout-day").value) || 0];
+  return day ? buildWorkout(day, state.analysis.profile) : null;
+}
+
+function renderWorkouts() {
+  const sel = $("#workout-day");
+  const prev = sel.value;
+  sel.innerHTML = state.days.map((d, i) => `<option value="${i}">${i === 0 ? "Heute" : fmtDay(d.date)} · ${esc(d.intensity === "rest" ? "Ruhetag" : d.title)}</option>`).join("");
+  if (prev) sel.value = prev;
+  renderWorkoutPreview();
+}
+
+function renderWorkoutPreview() {
+  const w = currentWorkout();
+  const stepHtml = (s) => {
+    if (s.kind === "repeat") return `<div class="wrepeat"><b>${s.n} × wiederholen</b>${s.steps.map(stepHtml).join("")}</div>`;
+    return `<div class="wstep"><i style="background:${STEP_COLOR[s.kind]}"></i><div><b>${STEP_LABEL[s.kind]}</b> · ${fmtDuration(s.sec)}<small>${esc(s.note || "")}</small></div><span>${s.hr ? `${s.hr[0]}–${s.hr[1]} bpm` : "frei"}</span></div>`;
+  };
+  $("#workout-send").disabled = !w;
+  $("#workout-fit").disabled = !w;
+  $("#workout-preview").innerHTML = w
+    ? `<p class="day-meta">${esc(w.name)} · ${SPORTS[w.sport]} · ${fmtDuration(totalSeconds(w.steps))} · ${INTENSITIES[w.intensity]}</p><div class="steps">${w.steps.map(stepHtml).join("")}</div>`
+    : '<p class="hint">Für diesen Tag gibt es kein strukturiertes Ausdauer-Workout (Ruhetag, Wettkampf, Kraft oder Sportart ohne Workout-Unterstützung). Unterstützt werden Laufen und Radfahren.</p>';
+  $("#workout-note").innerHTML = `„An Garmin Connect senden“ legt das Workout in deinem Garmin-Konto an und plant es für den gewählten Tag ein; die Uhr übernimmt es bei der nächsten Synchronisation (lokaler Server nötig). Alternativ die FIT-Datei per USB in den Ordner GARMIN/NewFiles der Uhr kopieren ${cite("fitWorkout")}. Intervallbereiche: ${cite("helgerud")}`;
 }
 
 // ---------- Garmin Connect ----------
@@ -394,6 +621,59 @@ $("#live-rec").addEventListener("click", () => {
 });
 $("#live-stop").addEventListener("click", () => state.ble?.disconnect());
 
+// ---------- Reiter ----------
+
+function showTab(name) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== name));
+  store.set("tab", name);
+  // Diagramme in vorher verborgenen Reitern brauchen die echte Breite
+  if (state.analysis) render();
+}
+$(".tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]");
+  if (b) showTab(b.dataset.tab);
+});
+
+// ---------- Workouts senden ----------
+
+$("#workout-day").addEventListener("change", renderWorkoutPreview);
+
+$("#workout-send").addEventListener("click", async () => {
+  const w = currentWorkout();
+  if (!w) return;
+  if (!state.server) {
+    toast("Zum Senden an Garmin Connect bitte den lokalen Server starten: python server.py", 6000);
+    return;
+  }
+  const btn = $("#workout-send");
+  btn.disabled = true;
+  try {
+    const { ok, body } = await fetchJson("api/workout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workout: toGarminWorkout(w), date: w.date }) });
+    if (!ok) throw new Error(body.error);
+    toast(`Workout „${w.name}“ für ${fmtDay(w.date)} in Garmin Connect eingeplant. Uhr synchronisieren, um es zu übertragen.`, 7000);
+  } catch (e) {
+    toast(e.message, 8000);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("#workout-fit").addEventListener("click", async () => {
+  const w = currentWorkout();
+  if (!w) return;
+  try {
+    const bytes = encodeFitWorkout(w, await loadFitSdk());
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    const link = Object.assign(document.createElement("a"), { href: url, download: `${w.date}-${w.name.replace(/[^\wäöüÄÖÜß-]+/g, "_")}.fit` });
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("FIT-Datei erstellt – per USB nach GARMIN/NewFiles kopieren.", 6000);
+  } catch (e) {
+    toast(`FIT-Datei konnte nicht erstellt werden: ${e.message}`, 7000);
+  }
+});
+
 // ---------- Vorschläge ----------
 
 $("#days").addEventListener("click", (e) => {
@@ -496,4 +776,9 @@ window.addEventListener("resize", () => {
   }, 150);
 });
 
+const savedTab = store.get("tab", "overview");
+if (savedTab !== "overview" && document.querySelector(`.tabs button[data-tab="${savedTab}"]`)) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === savedTab));
+  document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== savedTab));
+}
 load();

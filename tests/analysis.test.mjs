@@ -61,3 +61,63 @@ test("Bluetooth-Herzfrequenz: 8- und 16-Bit-Format", () => {
   assert.equal(parseHeartRate(new DataView(new Uint8Array([0x00, 72]).buffer)), 72);
   assert.equal(parseHeartRate(new DataView(new Uint8Array([0x01, 0x2c, 0x01]).buffer)), 300);
 });
+
+import { last7Days, illnessScore, vo2maxTrend, pearson } from "../web/js/insights.js";
+import { buildWorkout, toGarminWorkout, fitSteps, totalSeconds } from "../web/js/workouts.js";
+
+test("Wöchentliche Bereitschaft aus HRV, Schlaf und Trainingsstress", () => {
+  const a = analyze(demoData(TODAY), TODAY);
+  assert.equal(a.readinessWeek.length, 7);
+  const r = a.readinessWeek.at(-1);
+  assert.deepEqual(Object.keys(r.parts).sort(), ["hrv", "load", "sleep"]);
+  const expected = Math.round(r.parts.hrv * 0.4 + r.parts.sleep * 0.35 + r.parts.load * 0.25);
+  assert.equal(r.score, expected);
+  assert.ok(a.weeklyReadiness.score > r.score); // der Einbruch betrifft nur die letzten Tage
+});
+
+test("7-Tage-Übersicht enthält Schlaf und Belastung", () => {
+  const data = demoData(TODAY);
+  const rows = last7Days(data, analyze(data, TODAY));
+  assert.equal(rows.length, 7);
+  assert.equal(rows.at(-1).date, TODAY);
+  assert.ok(rows.every((r) => r.sleepScore != null && r.deepPct > 0 && r.remPct > 0));
+  assert.ok(rows.some((r) => r.trimp > 0 && r.garminLoad > 0));
+});
+
+test("Illness-Score erkennt das Warnmuster der Beispieldaten", () => {
+  const data = demoData(TODAY);
+  const ill = illnessScore(data.daily, TODAY);
+  assert.equal(ill.level, "high");
+  assert.ok(ill.reasons.some((x) => x.startsWith("Ruhepuls")));
+  const calm = illnessScore(data.daily, addDays(TODAY, -5));
+  assert.equal(calm.level, "normal");
+});
+
+test("VO2max-Trend und Korrelation", () => {
+  const v = vo2maxTrend(demoData(TODAY), TODAY);
+  assert.ok(v.delta84 > 1);
+  assert.ok(Math.abs(pearson([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]) - 1) < 1e-12);
+});
+
+test("Strukturiertes Intervall-Workout für Garmin Connect und FIT", () => {
+  const p = { hrMax: 190, hrRest: 50, lt1Pct: 0.8, lt2Pct: 0.88 };
+  const w = buildWorkout({ sport: "run", intensity: "hard", durationMin: 55, title: "Intervalle", date: TODAY }, p);
+  assert.equal(totalSeconds(w.steps), 55 * 60);
+  const repeat = w.steps.find((s) => s.kind === "repeat");
+  assert.deepEqual(repeat.steps[0].hr, [171, 181]); // 90–95 % HFmax
+
+  const g = toGarminWorkout(w);
+  const steps = g.workoutSegments[0].workoutSteps;
+  assert.equal(g.sportType.sportTypeKey, "running");
+  assert.equal(steps[1].type, "RepeatGroupDTO");
+  assert.deepEqual(steps.map((s) => s.stepOrder), [1, 2, 5]);
+  assert.deepEqual(steps[1].workoutSteps.map((s) => s.stepOrder), [3, 4]);
+
+  const f = fitSteps(w.steps);
+  const rep = f.find((s) => s.durationType === "repeatUntilStepsCmplt");
+  assert.equal(rep.durationValue, 1);
+  assert.equal(rep.targetValue, repeat.n);
+  assert.equal(f[1].customTargetValueLow, 171 + 100);
+
+  assert.equal(buildWorkout({ sport: "strength", intensity: "easy", durationMin: 40, date: TODAY }, p), null);
+});

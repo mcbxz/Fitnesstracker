@@ -50,6 +50,31 @@ export const SOURCES = {
     title: "Recommended Amount of Sleep for a Healthy Adult. Konsenserklärung der American Academy of Sleep Medicine und Sleep Research Society, Sleep 38(6), 843–844",
     url: "https://doi.org/10.5665/sleep.4716",
   },
+  radin: {
+    short: "Radin et al. 2020",
+    title: "Harnessing wearable device data to improve state-level real-time surveillance of influenza-like illness in the USA. The Lancet Digital Health 2(2), e85–e93",
+    url: "https://doi.org/10.1016/S2589-7500(19)30222-5",
+  },
+  mishra: {
+    short: "Mishra et al. 2020",
+    title: "Pre-symptomatic detection of COVID-19 from smartwatch data. Nature Biomedical Engineering 4, 1208–1220",
+    url: "https://doi.org/10.1038/s41551-020-00640-6",
+  },
+  miller: {
+    short: "Miller et al. 2020",
+    title: "Analyzing changes in respiratory rate to predict the risk of COVID-19 infection. PLOS ONE 15(12), e0243693",
+    url: "https://doi.org/10.1371/journal.pone.0243693",
+  },
+  fullagar: {
+    short: "Fullagar et al. 2015",
+    title: "Sleep and athletic performance: the effects of sleep loss on exercise performance, and physiological and cognitive responses to exercise. Sports Medicine 45(2), 161–186",
+    url: "https://doi.org/10.1007/s40279-014-0260-0",
+  },
+  fitWorkout: {
+    short: "Garmin FIT SDK",
+    title: "FIT Cookbook: Encoding Workout Files – offizielle Dokumentation von Garmin",
+    url: "https://developer.garmin.com/fit/cookbook/encoding-workout-files/",
+  },
   bleHr: {
     short: "Bluetooth SIG",
     title: "Heart Rate Service 1.0 – Spezifikation der Bluetooth Special Interest Group",

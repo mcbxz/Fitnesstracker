@@ -9,8 +9,13 @@ const SPORT_MAP = {
 
 let sdk;
 
-export async function parseFitFile(file, profile) {
+export async function loadFitSdk() {
   sdk ??= await import(FIT_SDK_URL);
+  return sdk;
+}
+
+export async function parseFitFile(file, profile) {
+  await loadFitSdk();
   const stream = sdk.Stream.fromArrayBuffer(await file.arrayBuffer());
   const decoder = new sdk.Decoder(stream);
   if (!decoder.isFIT()) throw new Error(`${file.name} ist keine FIT-Datei.`);

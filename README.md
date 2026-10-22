@@ -8,7 +8,7 @@ nächsten 7 Tage an den aktuellen Zustand anpasst.
 
 | Quelle | Was wird übertragen | Voraussetzung |
 |---|---|---|
-| **Garmin Connect** | Aktivitäten (120 Tage), HRV (Herzfrequenzvariabilität), Ruhepuls, Schlaf | lokaler Server (`server.py`), Garmin-Konto |
+| **Garmin Connect** | Aktivitäten (120 Tage) inkl. Trainingslast, Trainingseffekt und VO2max; HRV (Herzfrequenzvariabilität) mit Status, Ruhepuls, Schlafphasen, Atemfrequenz, Body Battery, Stress | lokaler Server (`server.py`), Garmin-Konto |
 | **FIT-Import** | einzelne Aktivitäten inkl. Pulsverlauf | `.fit`-Dateien aus `GARMIN/Activity` (Uhr per USB anschließen) |
 | **Bluetooth** | Live-Herzfrequenz, optional als Einheit aufzeichnen | Chrome/Edge (Desktop oder Android), auf der Uhr „Herzfrequenz übertragen“ aktivieren |
 
@@ -48,6 +48,23 @@ Der Server lauscht bewusst nur auf `127.0.0.1`.
 Nur Beispieldaten, FIT-Import und Bluetooth ansehen: `web/` mit einem beliebigen
 statischen Webserver ausliefern (z. B. `python -m http.server -d web`).
 
+## Bereiche der Oberfläche
+
+| Reiter | Inhalt |
+|---|---|
+| Übersicht | Kennzahlen, Tabelle der letzten 7 Tage (Schlaf, HRV, Ruhepuls, Body Battery, Belastung, Readiness), 7-Tage-Empfehlung, Fitness-/Ermüdungsverlauf, Coach-Hinweise |
+| Training | VO2max (maximale Sauerstoffaufnahme) mit Trend über 4 und 12 Wochen, Belastungssteuerung (TRIMP und Garmin-Trainingslast), aerober/anaerober Trainingseffekt, Pace und Herzfrequenz, Wochenumfang, Intensitätsverteilung, Aktivitäten |
+| Regeneration | Schlafarchitektur (Tief-, Leicht-, REM-Schlaf, Wachphasen), HRV-Verlauf mit Normalbereich, Ruhepuls, Atemfrequenz, Body Battery, Stress |
+| Muster | Illness-Score, wöchentliche Bereitschaft (Readiness), Zusammenhänge zwischen Schlaf, Belastung, HRV und Laufeffizienz |
+| Workouts | Strukturiertes Workout aus der Tagesempfehlung; senden an Garmin Connect (Kalender) oder als FIT-Datei herunterladen |
+
+### Workouts an die Uhr senden
+
+- **Garmin Connect:** „An Garmin Connect senden“ legt das Workout im Garmin-Konto an und plant es für den Tag ein. Die Uhr übernimmt es bei der nächsten Synchronisation mit der Garmin-Connect-App.
+- **USB:** Die FIT-Datei in den Ordner `GARMIN/NewFiles` der Uhr kopieren ([FIT Cookbook: Encoding Workout Files](https://developer.garmin.com/fit/cookbook/encoding-workout-files/)).
+
+Unterstützt werden Lauf- und Rad-Workouts mit Pulsbereichen aus dem Profil.
+
 ## Was berechnet wird
 
 | Kennzahl | Bedeutung | Grundlage |
@@ -57,7 +74,10 @@ statischen Webserver ausliefern (z. B. `python -m http.server -d web`).
 | Belastungsverhältnis (ACWR, Acute:Chronic Workload Ratio) | 7-Tage- zu 28-Tage-Belastung; Zielbereich 0,8–1,3 | Gabbett 2016, Br J Sports Med 50(5) |
 | Monotonie | Mittelwert / Standardabweichung der Tageslast | Foster 1998, Med Sci Sports Exerc 30(7) |
 | Intensitätsverteilung | Anteil locker / moderat / intensiv, Orientierung ~80 % locker | Seiler 2010, Int J Sports Physiol Perform 5(3) |
-| Bereitschaft | HRV und Ruhepuls im Vergleich zum eigenen 28-Tage-Normalbereich, Schlafdauer | Plews et al. 2013, Sports Med 43(9); Watson et al. 2015, Sleep 38(6) |
+| Bereitschaft (Readiness) | HRV 40 % (inkl. Ruhepuls) im Vergleich zum eigenen 28-Tage-Normalbereich, Schlaf 35 %, akuter Trainingsstress (Form) 25 %; Wochenwert = Ø der letzten 7 Tage | Plews et al. 2013, Sports Med 43(9); Banister-Modell |
+| Illness-Score | Frühwarnwert 0–100 aus Anstieg von Ruhepuls und Atemfrequenz, Abfall von HRV und Schlafscore gegenüber dem eigenen Normalbereich; keine Diagnose | Radin et al. 2020, Lancet Digit Health 2(2); Mishra et al. 2020, Nat Biomed Eng 4; Miller et al. 2020, PLOS ONE 15(12) |
+| Schlaf & Leistung | Laufeffizienz (Tempo je Herzschlag) nach guten vs. schlechten Nächten | Fullagar et al. 2015, Sports Med 45(2) |
+| Schlafdauer | Hinweis bei weniger als 7 h | Watson et al. 2015, Sleep 38(6) |
 | Maximalpuls (ohne Messwert) | 208 − 0,7 × Alter | Tanaka et al. 2001, J Am Coll Cardiol 37(1) |
 
 ### Anpassung des Trainingsplans
@@ -86,7 +106,9 @@ garmin_sync.py        Abruf aus Garmin Connect → data/garmin.json
 server.py             lokaler Webserver + API (Sync, Trainingsplan)
 web/index.html        Oberfläche
 web/styles.css        Gestaltung (hell/dunkel nach Systemeinstellung)
-web/js/analysis.js    Berechnungen, Tipps, Wochenvorschläge
+web/js/analysis.js    Belastung, Readiness, Tipps, Wochenvorschläge
+web/js/insights.js    VO2max, Effizienz, Schlafarchitektur, Illness-Score, Muster
+web/js/workouts.js    strukturierte Workouts (Garmin Connect, FIT)
 web/js/charts.js      SVG-Diagramme
 web/js/bluetooth.js   Live-Puls per Web Bluetooth
 web/js/fit-import.js  FIT-Dateien über das Garmin FIT SDK

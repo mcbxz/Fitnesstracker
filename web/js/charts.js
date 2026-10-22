@@ -27,7 +27,7 @@ function frame(container, height) {
   return { svg, tip, width };
 }
 
-function yAxis(svg, { left, right, top, bottom, max, ticks = 4 }) {
+function yAxis(svg, { left, right, top, bottom, max, ticks = 5 }) {
   for (let i = 0; i <= ticks; i++) {
     const v = (max / ticks) * i;
     const y = bottom - ((bottom - top) * i) / ticks;
@@ -152,4 +152,103 @@ export function sparkline(container, values, { min = 60, max = 200 } = {}) {
   const x = (i) => (i / (values.length - 1)) * width;
   const y = (v) => H - 4 - ((v - lo) / (hi - lo)) * (H - 8);
   el("path", { d: values.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join(""), fill: "none", stroke: "var(--critical)", "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+}
+
+// Linie über Tageswerten mit optionalem Normalbereich (Band) – z. B. VO2max oder HRV.
+export function lineChart(container, series, { color = "var(--series-1)", band = null, unit = "", label = "Wert", decimals = 0, height = 180 } = {}) {
+  const H = height;
+  const { svg, tip, width } = frame(container, H);
+  if (series.length < 2) {
+    container.innerHTML = '<p class="hint">Noch zu wenige Werte für einen Verlauf.</p>';
+    return;
+  }
+  const m = { left: 34, right: 8, top: 10, bottom: 24 };
+  const r = width - m.right;
+  const b = H - m.bottom;
+  const vals = series.map((d) => d.value).concat(band ? band.flat() : []);
+  const tick = niceMax((Math.max(...vals) - Math.min(...vals) || 1) / 3);
+  const lo = Math.floor(Math.min(...vals) / tick) * tick;
+  const hi = Math.max(lo + tick, Math.ceil(Math.max(...vals) / tick) * tick);
+  const step = (r - m.left) / (series.length - 1);
+  const x = (i) => m.left + step * i;
+  const y = (v) => b - ((v - lo) / (hi - lo)) * (b - m.top);
+
+  for (let v = lo; v <= hi + 1e-9; v += tick) {
+    el("line", { x1: m.left, x2: r, y1: y(v), y2: y(v), class: v === lo ? "baseline" : "gridline" }, svg);
+    el("text", { x: m.left - 8, y: y(v) + 4, "text-anchor": "end" }, svg).textContent = Number.isInteger(v) ? v : v.toFixed(1).replace(".", ",");
+  }
+  if (band) {
+    el("rect", { x: m.left, y: y(band[1]), width: r - m.left, height: y(band[0]) - y(band[1]), fill: color, opacity: 0.1, rx: 4 }, svg);
+  }
+  el("path", {
+    d: series.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join(""),
+    fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round",
+  }, svg);
+  const lastI = series.length - 1;
+  el("circle", { cx: x(lastI), cy: y(series[lastI].value), r: 4, fill: color, stroke: "var(--surface)", "stroke-width": 2 }, svg);
+  const every = Math.max(1, Math.ceil(series.length / 5));
+  for (let i = lastI; i >= 0; i -= every) {
+    el("text", { x: x(i), y: H - 6, "text-anchor": i === lastI ? "end" : "middle" }, svg).textContent = fmtDate(series[i].date);
+  }
+
+  const cross = el("line", { y1: m.top, y2: b, class: "crosshair", visibility: "hidden" }, svg);
+  const dot = el("circle", { r: 4, fill: color, stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }, svg);
+  const hit = el("rect", { x: m.left - step / 2, y: 0, width: r - m.left + step, height: H, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", (e) => {
+    const rect = svg.getBoundingClientRect();
+    const scale = width / rect.width;
+    const i = Math.max(0, Math.min(lastI, Math.round(((e.clientX - rect.left) * scale - m.left) / step)));
+    const d = series[i];
+    cross.setAttribute("x1", x(i));
+    cross.setAttribute("x2", x(i));
+    cross.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", x(i));
+    dot.setAttribute("cy", y(d.value));
+    dot.setAttribute("visibility", "visible");
+    showTip(tip, container, x(i) / scale, y(d.value) / scale,
+      `<b>${fmtDate(d.date)}</b>${row(color, label, `${d.value.toFixed(decimals).replace(".", ",")}${unit}`)}${band ? row("", "Normalbereich", `${band[0]}–${band[1]}${unit}`) : ""}`);
+  });
+  hit.addEventListener("pointerleave", () => {
+    tip.hidden = true;
+    cross.setAttribute("visibility", "hidden");
+    dot.setAttribute("visibility", "hidden");
+  });
+}
+
+// Gestapelte Balken je Nacht (Schlafphasen in Minuten).
+export function stackedBars(container, rows, keys, { height = 200, unit = "min" } = {}) {
+  const H = height;
+  const { svg, tip, width } = frame(container, H);
+  const m = { left: 34, right: 8, top: 10, bottom: 24 };
+  const r = width - m.right;
+  const b = H - m.bottom;
+  const totals = rows.map((d) => keys.reduce((s, k) => s + (d.values[k.key] || 0), 0));
+  const max = niceMax(Math.max(...totals));
+  yAxis(svg, { left: m.left, right: r, top: m.top, bottom: b, max });
+  const step = (r - m.left) / rows.length;
+  const bw = Math.min(28, step * 0.62);
+  rows.forEach((d, i) => {
+    const cx = m.left + step * (i + 0.5);
+    let acc = 0;
+    keys.forEach((k, j) => {
+      const v = d.values[k.key] || 0;
+      if (!v) return;
+      const y0 = b - (acc / max) * (b - m.top);
+      const h = (v / max) * (b - m.top);
+      acc += v;
+      const top = j === keys.length - 1 || keys.slice(j + 1).every((kk) => !d.values[kk.key]);
+      // 2px Abstand zwischen den Segmenten, gerundetes oberes Ende
+      el("rect", { x: cx - bw / 2, y: y0 - h + 1, width: bw, height: Math.max(0, h - 2), rx: top ? 3 : 1, fill: k.color }, svg);
+    });
+    if (i % Math.max(1, Math.ceil(rows.length / 7)) === (rows.length - 1) % Math.max(1, Math.ceil(rows.length / 7))) {
+      el("text", { x: cx, y: H - 6, "text-anchor": "middle" }, svg).textContent = fmtDate(d.date);
+    }
+    const hit = el("rect", { x: cx - step / 2, y: m.top, width: step, height: b - m.top, fill: "transparent" }, svg);
+    hit.addEventListener("pointerenter", () => {
+      const scale = width / svg.getBoundingClientRect().width;
+      showTip(tip, container, cx / scale, (b - (totals[i] / max) * (b - m.top)) / scale,
+        `<b>${fmtDate(d.date)}</b>${[...keys].reverse().map((k) => row(k.color, k.label, `${Math.round(d.values[k.key] || 0)} ${unit}`)).join("")}`);
+    });
+    hit.addEventListener("pointerleave", () => (tip.hidden = true));
+  });
 }

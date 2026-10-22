@@ -189,44 +189,68 @@ export function weeklyVolume(activities, endKey, weeks) {
   return out;
 }
 
-// ---------- Erholung ----------
+// ---------- Erholung / Bereitschaft ----------
 
-// Vergleich des heutigen Werts mit dem individuellen Normalbereich (Mittelwert ± 1 SD
-// der vorangegangenen 28 Tage), angelehnt an Plews et al. 2013.
-export function readiness(daily, todayKey) {
-  const today = daily.find((d) => d.date === todayKey) || daily[daily.length - 1];
-  if (!today) return { status: "unknown", reasons: [], score: null };
-  const prior = daily.filter((d) => d.date < today.date).slice(-28);
+// Bereitschaft aus HRV (40 %), Schlaf (35 %) und akutem Trainingsstress (25 %).
+// HRV und Ruhepuls werden mit dem individuellen Normalbereich (Mittelwert ± 1 SD der
+// vorangegangenen 28 Tage) verglichen, angelehnt an Plews et al. 2013; der akute
+// Trainingsstress ergibt sich aus der Form (TSB) des Banister-Modells.
+export function readinessFor(daily, model, key) {
+  const today = daily.find((d) => d.date === key);
+  const day = model.find((m) => m.date === key);
+  const prior = daily.filter((d) => d.date < key).slice(-28);
   const reasons = [];
-  let score = 70;
+  const parts = {};
 
   const hrvBase = prior.map((d) => d.hrv).filter(Boolean);
-  if (today.hrv && hrvBase.length >= 7) {
+  if (today?.hrv && hrvBase.length >= 7) {
     const m = mean(hrvBase);
     const s = sd(hrvBase) || 1;
     const z = (today.hrv - m) / s;
-    score += clamp(z * 12, -30, 15);
-    if (z < -1) reasons.push(`HRV (Herzfrequenzvariabilität) ${today.hrv} ms liegt unter deinem Normalbereich (${Math.round(m - s)}–${Math.round(m + s)} ms)`);
-    else reasons.push(`HRV (Herzfrequenzvariabilität) ${today.hrv} ms im Normalbereich (${Math.round(m - s)}–${Math.round(m + s)} ms)`);
+    parts.hrv = clamp(60 + z * 20, 0, 100);
+    const range = `${Math.round(m - s)}–${Math.round(m + s)} ms`;
+    reasons.push(z < -1
+      ? `HRV (Herzfrequenzvariabilität) ${today.hrv} ms liegt unter deinem Normalbereich (${range})`
+      : `HRV (Herzfrequenzvariabilität) ${today.hrv} ms im Normalbereich (${range})`);
+    const rhrBase = prior.map((d) => d.restingHr).filter(Boolean);
+    if (today.restingHr && rhrBase.length >= 7) {
+      const diff = today.restingHr - mean(rhrBase);
+      if (diff > 2) parts.hrv = clamp(parts.hrv - (diff - 2) * 4, 0, 100);
+      if (diff >= 5) reasons.push(`Ruhepuls ${today.restingHr} bpm, ${Math.round(diff)} Schläge über deinem Mittel`);
+    }
   }
 
-  const rhrBase = prior.map((d) => d.restingHr).filter(Boolean);
-  if (today.restingHr && rhrBase.length >= 7) {
-    const diff = today.restingHr - mean(rhrBase);
-    score -= clamp(diff * 3, -10, 20);
-    if (diff >= 5) reasons.push(`Ruhepuls ${today.restingHr} bpm, ${Math.round(diff)} Schläge über deinem Mittel`);
+  if (today?.sleepScore != null) parts.sleep = today.sleepScore;
+  else if (today?.sleepHours) parts.sleep = clamp((today.sleepHours / 8) * 85, 0, 100);
+  if (today?.sleepHours && today.sleepHours < 7) reasons.push(`Nur ${today.sleepHours.toFixed(1).replace(".", ",")} h Schlaf`);
+
+  if (day) {
+    parts.load = clamp(70 + day.tsb * 1.5, 0, 100);
+    if (day.tsb < -20) reasons.push(`Hoher akuter Trainingsstress (Form ${Math.round(day.tsb)})`);
   }
 
-  if (today.sleepHours) {
-    if (today.sleepHours < 7) {
-      score -= (7 - today.sleepHours) * 6;
-      reasons.push(`Nur ${today.sleepHours.toFixed(1).replace(".", ",")} h Schlaf`);
-    } else score += 5;
+  const weights = { hrv: 0.4, sleep: 0.35, load: 0.25 };
+  const used = Object.keys(parts);
+  if (parts.hrv === undefined && parts.sleep === undefined) {
+    return { status: "unknown", score: null, reasons, parts, today };
   }
-
-  score = Math.round(clamp(score, 0, 100));
+  const wsum = used.reduce((s, k) => s + weights[k], 0);
+  const score = Math.round(used.reduce((s, k) => s + parts[k] * weights[k], 0) / wsum);
   const status = score < 50 ? "low" : score < 70 ? "normal" : "good";
-  return { status, score, reasons, today };
+  return { status, score, reasons, parts, today, date: key };
+}
+
+export function readinessSeries(daily, model, endKey, days = 7) {
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) out.push(readinessFor(daily, model, addDays(endKey, -i)));
+  return out;
+}
+
+export function weeklyReadiness(series) {
+  const scores = series.map((r) => r.score).filter((x) => x != null);
+  if (!scores.length) return null;
+  const score = Math.round(mean(scores));
+  return { score, status: score < 50 ? "low" : score < 70 ? "normal" : "good", days: scores.length };
 }
 
 // ---------- Gesamtanalyse ----------
@@ -236,6 +260,8 @@ export function analyze(data, todayKey = dateKey(new Date())) {
   const loads = dailyLoads(data.activities, p, todayKey, 150);
   const model = performanceModel(loads);
   const now = model[model.length - 1];
+  const daily = data.daily || [];
+  const readinessWeek = readinessSeries(daily, model, todayKey, 7);
   return {
     profile: p,
     zones: hrZones(p),
@@ -247,7 +273,10 @@ export function analyze(data, todayKey = dateKey(new Date())) {
     monotony: monotony(loads),
     distribution: intensityDistribution(data.activities, p, addDays(todayKey, -27)),
     weeks: weeklyVolume(data.activities, todayKey, 8),
-    readiness: readiness(data.daily || [], todayKey),
+    readiness: readinessWeek[readinessWeek.length - 1],
+    readinessWeek,
+    weeklyReadiness: weeklyReadiness(readinessWeek),
+    fullModel: model,
     todayKey,
   };
 }
