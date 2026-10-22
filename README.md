@@ -48,6 +48,15 @@ Der Server lauscht bewusst nur auf `127.0.0.1`.
 Nur Beispieldaten, FIT-Import und Bluetooth ansehen: `web/` mit einem beliebigen
 statischen Webserver ausliefern (z. B. `python -m http.server -d web`).
 
+### In einer Claude-Code-Cloud-Umgebung
+
+1. Lokal einmalig anmelden und die Tokens ausgeben: `python garmin_sync.py --export-tokens`
+2. In den Einstellungen der Cloud-Umgebung die Ausgabe als Secret bzw. Umgebungsvariable `GARMINTOKENS` hinterlegen
+   (die Tokens gewähren vollen Zugriff auf das Garmin-Konto und laufen nach einiger Zeit ab).
+3. Unter Netzwerkzugriff die Domains `connect.garmin.com`, `connectapi.garmin.com`, `sso.garmin.com`
+   und `diauth.garmin.com` erlauben.
+4. Neue Sitzung starten; danach liest `python garmin_sync.py` die Daten ohne Passwort und MFA-Abfrage.
+
 ## Bereiche der Oberfläche
 
 | Reiter | Inhalt |

@@ -5,6 +5,7 @@ E-Mail und Passwort (aus Umgebungsvariablen oder interaktiv) abgefragt; danach
 werden nur noch die Tokens aus ``~/.garminconnect`` verwendet.
 
 Aufruf:  python garmin_sync.py [--days 120]
+         python garmin_sync.py --export-tokens   (Tokens als JSON für GARMINTOKENS ausgeben)
 """
 
 from __future__ import annotations
@@ -46,8 +47,11 @@ def _client(interactive: bool):
 
     email = os.getenv("GARMIN_EMAIL")
     password = os.getenv("GARMIN_PASSWORD")
-    tokens = Path(TOKENSTORE).expanduser()
-    has_tokens = tokens.exists() and any(tokens.iterdir()) if tokens.is_dir() else tokens.exists()
+    if TOKENSTORE.lstrip().startswith("{"):
+        has_tokens = True  # Tokens direkt als JSON in GARMINTOKENS (z. B. als Umgebungs-Secret in der Cloud)
+    else:
+        tokens = Path(TOKENSTORE).expanduser()
+        has_tokens = tokens.exists() and any(tokens.iterdir()) if tokens.is_dir() else tokens.exists()
 
     if not has_tokens and not (email and password):
         if not interactive:
@@ -293,8 +297,13 @@ def send_workout(workout: dict, schedule_date: str | None = None) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--days", type=int, default=120, help="Zeitraum in Tagen (Standard: 120)")
+    parser.add_argument("--export-tokens", action="store_true",
+                        help="Anmelden und die Tokens als JSON ausgeben (für GARMINTOKENS in einer Cloud-Umgebung)")
     args = parser.parse_args()
     try:
+        if args.export_tokens:
+            print(_client(interactive=sys.stdin.isatty()).client.dumps())
+            return
         sync(args.days, interactive=sys.stdin.isatty())
     except SyncError as exc:
         sys.exit(str(exc))
