@@ -98,7 +98,51 @@ def _activity(raw: dict) -> dict:
     }
 
 
-def _daily(client, day: date) -> dict:
+SLEEP_LEVELS = {0: "deep", 1: "light", 2: "rem", 3: "awake"}  # activityLevel in sleepLevels
+
+
+def _hypnogram(sleep_raw: dict, dto: dict) -> dict | None:
+    """Schlafphasen als Minuten seit Einschlafen (Ortszeit)."""
+    levels = sleep_raw.get("sleepLevels") or []
+    start_gmt = dto.get("sleepStartTimestampGMT")
+    start_local = dto.get("sleepStartTimestampLocal")
+    if not levels or not start_gmt or not start_local:
+        return None
+
+    def minutes(ts: str) -> int:
+        t = datetime.fromisoformat(ts.replace("Z", "")).replace(tzinfo=timezone.utc)
+        return round((t.timestamp() * 1000 - start_gmt) / 60000)
+
+    segments = []
+    for lv in levels:
+        level = SLEEP_LEVELS.get(round(lv.get("activityLevel", -1)))
+        if level and lv.get("startGMT") and lv.get("endGMT"):
+            segments.append([minutes(lv["startGMT"]), minutes(lv["endGMT"]), level])
+    start = datetime.fromtimestamp(start_local / 1000, tz=timezone.utc).strftime("%H:%M")
+    return {"start": start, "segments": segments} if segments else None
+
+
+def _intraday_hr(client, iso: str) -> list | None:
+    """Herzfrequenz im Tagesverlauf, gemittelt auf 10-Minuten-Blöcke (Ortszeit)."""
+    raw = _safe(client.get_heart_rates, iso) or {}
+    values = raw.get("heartRateValues") or []
+    offset = (raw.get("startTimestampLocal") and raw.get("startTimestampGMT")) and (
+        datetime.fromisoformat(raw["startTimestampLocal"]) - datetime.fromisoformat(raw["startTimestampGMT"])
+    )
+    if not values or offset is None:
+        return None
+    buckets: list[list[int]] = [[] for _ in range(144)]
+    for ts, bpm in values:
+        if bpm is None:
+            continue
+        local = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).replace(tzinfo=None) + offset
+        if local.date().isoformat() == iso:
+            buckets[(local.hour * 60 + local.minute) // 10].append(bpm)
+    series = [round(sum(b) / len(b)) if b else None for b in buckets]
+    return series if any(series) else None
+
+
+def _daily(client, day: date, detailed: bool = False) -> dict:
     iso = day.isoformat()
     entry: dict = {"date": iso}
 
@@ -111,7 +155,8 @@ def _daily(client, day: date) -> dict:
     if baseline.get("balancedLow") and baseline.get("balancedUpper"):
         entry["hrvBaseline"] = [baseline["balancedLow"], baseline["balancedUpper"]]
 
-    sleep = (_safe(client.get_sleep_data, iso) or {}).get("dailySleepDTO") or {}
+    sleep_raw = _safe(client.get_sleep_data, iso) or {}
+    sleep = sleep_raw.get("dailySleepDTO") or {}
     if sleep.get("sleepTimeSeconds"):
         entry["sleepHours"] = round(sleep["sleepTimeSeconds"] / 3600, 2)
         for key, field in (("deep", "deepSleepSeconds"), ("rem", "remSleepSeconds"),
@@ -129,6 +174,17 @@ def _daily(client, day: date) -> dict:
     entry["bodyBatteryLow"] = stats.get("bodyBatteryLowestValue")
     entry["bodyBatteryCharged"] = stats.get("bodyBatteryChargedValue")
     entry["stress"] = stats.get("averageStressLevel")
+    entry["steps"] = stats.get("totalSteps")
+    entry["stepGoal"] = stats.get("dailyStepGoal")
+    entry["calories"] = stats.get("totalKilocalories")
+    entry["activeCalories"] = stats.get("activeKilocalories")
+    if stats.get("totalDistanceMeters") is not None:
+        entry["distanceKm"] = round(stats["totalDistanceMeters"] / 1000, 2)
+
+    # Tagesverlauf und Schlafphasen nur für die letzten Tage, um Abrufe zu begrenzen
+    if detailed:
+        entry["hrDay"] = _intraday_hr(client, iso)
+        entry["sleepLevels"] = _hypnogram(sleep_raw, sleep)
     return {k: v for k, v in entry.items() if v is not None}
 
 
@@ -170,10 +226,10 @@ def sync(days: int = 120, interactive: bool = False) -> dict:
     raw = client.get_activities_by_date(start.isoformat(), end.isoformat()) or []
     activities = sorted((_activity(a) for a in raw), key=lambda a: a["start"])
 
-    # Erholungswerte (HRV, Ruhepuls, Schlaf) sind für die Bereitschaft nur kurzfristig relevant
-    daily_days = min(days, 42)
-    print(f"Lade Erholungswerte der letzten {daily_days} Tage …", file=sys.stderr)
-    daily = [_daily(client, end - timedelta(days=i)) for i in range(daily_days - 1, -1, -1)]
+    # Tageswerte (Schritte, HRV, Ruhepuls, Schlaf …) für gut zwei Monate, damit Monatsvergleiche möglich sind
+    daily_days = min(days, 62)
+    print(f"Lade Tageswerte der letzten {daily_days} Tage …", file=sys.stderr)
+    daily = [_daily(client, end - timedelta(days=i), detailed=i < 14) for i in range(daily_days - 1, -1, -1)]
 
     vo2max = _vo2max_series(client, start, end)
 

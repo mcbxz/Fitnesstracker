@@ -13,6 +13,45 @@ const PACE = { easy: 345, long: 355, moderate: 290, hard: 300 }; // Sekunden pro
 const HR_PCT = { easy: 0.72, long: 0.74, moderate: 0.84, hard: 0.86 };
 const TE = { easy: [2.8, 0.2], long: [3.7, 0.4], moderate: [3.8, 1.2], hard: [3.9, 2.6] }; // aerob, anaerob
 
+// Herzfrequenz im Tagesverlauf in 10-Minuten-Schritten (144 Werte)
+function intradayHr(r, rhr, act) {
+  const out = [];
+  const actStart = act ? Number(act.start.slice(11, 13)) * 60 + Number(act.start.slice(14, 16)) : -1;
+  const actEnd = act ? actStart + act.durationSec / 60 : -1;
+  for (let m = 0; m < 1440; m += 10) {
+    let hr;
+    if (m < 390 || m >= 1400) hr = rhr + 2 + r() * 5;
+    else if (m >= actStart && m < actEnd) hr = act.avgHr + (r() - 0.5) * 16;
+    else hr = rhr + 18 + Math.sin((m / 1440) * Math.PI) * 14 + r() * 16;
+    out.push(Math.round(hr));
+  }
+  return out;
+}
+
+// Schlafphasen der Nacht: Zyklen von ca. 90 min, früh mehr Tiefschlaf, später mehr REM
+function hypnogram(r, hours, warn) {
+  const segments = [];
+  const total = Math.round(hours * 60);
+  let t = 0;
+  let cycle = 0;
+  const push = (len, level) => {
+    const e = Math.min(total, t + Math.round(len));
+    if (e > t) segments.push([t, e, level]);
+    t = e;
+  };
+  while (t < total) {
+    const late = cycle / 5;
+    push(22 + r() * 18, "light");
+    push((26 - late * 20) * (1 - warn * 0.4) * (0.7 + r() * 0.5), "deep");
+    push(10 + r() * 10, "light");
+    push((10 + late * 25) * (1 - warn * 0.3) * (0.7 + r() * 0.5), "rem");
+    if (r() < 0.35 + warn * 0.4) push(3 + r() * 8 + warn * 10, "awake");
+    cycle += 1;
+  }
+  const startMin = 22 * 60 + 50 + Math.round(r() * 40);
+  return { start: `${String(Math.floor(startMin / 60) % 24).padStart(2, "0")}:${String(startMin % 60).padStart(2, "0")}`, segments };
+}
+
 export function demoData(todayKey = dateKey(new Date())) {
   const r = rng(42);
   const profile = { name: "Demo", age: 34, sex: "male", observedHrMax: 186 };
@@ -30,13 +69,14 @@ export function demoData(todayKey = dateKey(new Date())) {
     const vo2 = 49.5 + (119 - i) * 0.02 + (r() - 0.5) * 0.4;
     vo2max.push({ date, vo2max: Math.round(vo2 * 10) / 10 });
 
+    let act = null;
     if (session.sport !== "rest" && r() > 0.12 && i > 0) {
       const scale = (0.85 + block * 0.07) * recentPush * (0.9 + r() * 0.2);
       const durationSec = Math.round(session.durationMin * 60 * scale);
       const strength = session.sport === "strength";
       const avgHr = strength ? Math.round(hrMax * 0.62) : Math.round(hrMax * (HR_PCT[session.intensity] + (r() - 0.5) * 0.04));
       const te = strength ? [1.8, 0.8] : TE[session.intensity];
-      const act = {
+      act = {
         id: `demo-${date}`,
         start: `${date}T${session.intensity === "long" ? "08:30" : "18:15"}:00`,
         sport: session.sport,
@@ -68,6 +108,10 @@ export function demoData(todayKey = dateKey(new Date())) {
     }
 
     const w = warn[i] || 0;
+    const walkSteps = Math.round(5200 + r() * 4500);
+    const runSteps = act && act.sport === "run" ? Math.round(act.distanceM * 1.0) : 0;
+    const steps = Math.round((walkSteps + runSteps) * (i === 0 ? 0.55 : 1));
+    const activeCalories = Math.round(walkSteps * 0.04 + (act ? (act.durationSec / 60) * (act.sport === "strength" ? 6 : 11) : 0));
     const sleepHours = Math.round((7.3 - w * 1.1 + (r() - 0.5) * 1.2) * 10) / 10;
     const quality = 0.9 + r() * 0.2 - w * 0.25;
     const deep = Math.round(sleepHours * 60 * 0.17 * quality);
@@ -87,7 +131,20 @@ export function demoData(todayKey = dateKey(new Date())) {
       bodyBattery: Math.round(88 + (r() - 0.5) * 14 - w * 30),
       bodyBatteryLow: Math.round(22 + (r() - 0.5) * 14),
       stress: Math.round(26 + (r() - 0.5) * 10 + w * 12),
+      steps,
+      stepGoal: 10000,
+      activeCalories,
+      calories: 1850 + activeCalories,
+      distanceKm: Math.round((walkSteps * 0.00075 + (act?.distanceM || 0) / 1000) * 100) / 100,
     });
+    if (i < 14) {
+      const day = daily[daily.length - 1];
+      day.hrDay = intradayHr(r, day.restingHr, act);
+      day.sleepLevels = hypnogram(r, sleepHours, w);
+      const stages = { deep: 0, light: 0, rem: 0, awake: 0 };
+      for (const [a, b, level] of day.sleepLevels.segments) stages[level] += b - a;
+      day.sleepStages = stages;
+    }
   }
 
   return { source: "demo", syncedAt: null, profile, activities, daily, vo2max };

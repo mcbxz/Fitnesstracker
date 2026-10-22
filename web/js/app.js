@@ -8,6 +8,8 @@ import { connectHeartRate } from "./bluetooth.js";
 import { parseFitFile, loadFitSdk } from "./fit-import.js";
 import * as I from "./insights.js";
 import { buildWorkout, toGarminWorkout, encodeFitWorkout, totalSeconds } from "./workouts.js";
+import * as P from "./period.js";
+import * as SC from "./stats-charts.js";
 import { cite } from "./sources.js";
 
 const $ = (s) => document.querySelector(s);
@@ -51,6 +53,8 @@ const state = {
   imported: store.get("imported", []),
   analysis: null,
   selectedDay: 0,
+  tab: store.get("tab", "overview"),
+  period: { mode: store.get("periodMode", "week"), anchor: null },
   ble: null,
   live: [],
   recording: null,
@@ -132,6 +136,9 @@ function render() {
   renderRecovery(data, a);
   renderPatterns(data, a);
   renderWorkouts();
+  renderSidebar(data, a);
+  renderStats(data, a);
+  applyTabHeader(a, days[0]);
   state.merged = data;
 }
 
@@ -139,17 +146,34 @@ function renderHeader(data, a, today) {
   const h = new Date().getHours();
   const hello = h < 11 ? "Guten Morgen" : h < 18 ? "Guten Tag" : "Guten Abend";
   const name = data.profile?.name && data.source !== "demo" ? `, ${data.profile.name.split(" ")[0]}` : "";
-  $("#headline").textContent = `${hello}${name}`;
-  const what = today.intensity === "rest" ? "Ruhetag" : `${today.title || SPORTS[today.sport]} · ${INTENSITIES[today.intensity]} · ${today.durationMin} min`;
-  $("#subline").textContent = `Heute empfohlen: ${what}`;
+  state.greeting = `${hello}${name}`;
 
   const badge = $("#source-badge");
   if (data.source === "garmin") {
-    badge.textContent = `Garmin Connect · ${new Date(data.syncedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`;
+    badge.textContent = `Garmin Connect verbunden · ${new Date(data.syncedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`;
   } else {
     badge.textContent = state.imported.length ? `Beispieldaten + ${state.imported.length} importiert` : "Beispieldaten";
   }
   $("#footer").innerHTML = `Die Empfehlungen sind trainingswissenschaftlich begründete Richtwerte und ersetzen keine ärztliche oder trainerische Beratung. Maximalpuls: ${a.profile.hrMax} bpm (${a.profile.hrMaxSource}${a.profile.hrMaxSource === "Tanaka-Formel" ? `, ${cite("tanaka")}` : ""}), Ruhepuls: ${a.profile.hrRest} bpm. Live-Puls: ${cite("bleHr")} · FIT-Import: ${cite("fit")}`;
+}
+
+const TAB_TITLES = {
+  training: ["Training", "Belastung, VO2max und Effizienz"],
+  recovery: ["Erholung", "Schlaf, HRV und Vitalwerte"],
+  patterns: ["Muster", "Frühwarnung und Zusammenhänge"],
+  workouts: ["Workouts", "Strukturierte Einheiten für deine Uhr"],
+};
+
+function applyTabHeader(a, today) {
+  $("#period-bar").hidden = state.tab !== "stats";
+  if (state.tab === "stats") return; // setzt renderStats
+  if (state.tab === "overview") {
+    $("#headline").textContent = state.greeting;
+    const what = today.intensity === "rest" ? "Ruhetag" : `${today.title || SPORTS[today.sport]} · ${INTENSITIES[today.intensity]} · ${today.durationMin} min`;
+    $("#subline").textContent = `Heute empfohlen: ${what}`;
+    return;
+  }
+  [$("#headline").textContent, $("#subline").textContent] = TAB_TITLES[state.tab];
 }
 
 function kpi({ label, value, note, status, statusText, extra = "" }) {
@@ -495,6 +519,166 @@ function renderWorkoutPreview() {
   $("#workout-note").innerHTML = `„An Garmin Connect senden“ legt das Workout in deinem Garmin-Konto an und plant es für den gewählten Tag ein; die Uhr übernimmt es bei der nächsten Synchronisation (lokaler Server nötig). Alternativ die FIT-Datei per USB in den Ordner GARMIN/NewFiles der Uhr kopieren ${cite("fitWorkout")}. Intervallbereiche: ${cite("helgerud")}`;
 }
 
+// ---------- Statistik: Tag / Woche / Monat ----------
+
+const MODE_TITLE = { day: "Tagesüberblick", week: "Wöchentlicher Überblick", month: "Monatsüberblick" };
+const SPORT_COLOR = { run: "var(--c-cyan)", strength: "var(--c-pink)", bike: "var(--c-orange)", swim: "var(--c-violet)", mobility: "var(--c-lime)", walk: "var(--c-lime)", other: "var(--muted)" };
+const ICONS = {
+  steps: '<path d="M8 3c2 0 3 2 3 5s-1 5-3 5-3-2-3-5 1-5 3-5ZM5 16h6l-1 4H6l-1-4ZM16 6c2 0 3 2 3 5s-1 5-3 5-3-2-3-5 1-5 3-5ZM13 19h6l-1 2h-4l-1-2Z"/>',
+  fire: '<path d="M12 22c4 0 7-3 7-7 0-5-4-7-5-11-2 2-3 4-3 6-1-1-2-2-2-4-2 2-4 5-4 9 0 4 3 7 7 7Z"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>',
+  heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/>',
+};
+
+function periodLabel(mode, from, to) {
+  const f = (k, o) => new Date(`${k}T12:00:00`).toLocaleDateString("de-DE", o);
+  if (mode === "day") return f(from, { weekday: "short", day: "numeric", month: "long", year: "numeric" });
+  if (mode === "week") return `${f(from, { day: "numeric", month: "short" })} – ${f(to, { day: "numeric", month: "short", year: "numeric" })}`;
+  return f(from, { month: "long", year: "numeric" });
+}
+
+function deltaHtml(now, before, prevName, invert = false) {
+  const c = P.change(now, before);
+  if (c == null) return `<span class="kpi-delta flat">kein Vergleich</span>`;
+  const good = invert ? c < 0 : c > 0;
+  const cls = Math.abs(c) < 0.005 ? "flat" : good ? "up" : "down";
+  return `<span class="kpi-delta ${cls}">${c >= 0 ? "+" : "−"}${num(Math.abs(c) * 100)} % vs. ${prevName}</span>`;
+}
+
+function statKpi({ label, value, unit = "", icon, color, delta }) {
+  return `<div class="card hud kpi" style="--kpi-color:${color};--hud-accent:${color}">
+    <div class="kpi-top"><span class="kpi-icon"><svg viewBox="0 0 24 24">${ICONS[icon]}</svg></span>
+    <div><div class="kpi-label">${label}</div><div class="kpi-value" style="color:${color};text-shadow:0 0 14px ${color}">${value}${unit ? `<small>${unit}</small>` : ""}</div></div></div>
+    ${delta}
+  </div>`;
+}
+
+function renderStats(data, a) {
+  const { mode } = state.period;
+  if (!state.period.anchor || state.period.anchor > a.todayKey) state.period.anchor = a.todayKey;
+  const s = P.summarize(data, a, mode, state.period.anchor);
+  const prev = P.summarize(data, a, mode, P.shiftAnchor(mode, state.period.anchor, -1));
+  const prevName = { day: "Vortag", week: "Vorwoche", month: "Vormonat" }[mode];
+  // Bei laufenden Zeiträumen werden Tagesdurchschnitte verglichen, damit die Werte fair bleiben
+  const nDays = (x) => x.days.filter((d) => !d.future).length || 1;
+  const perDay = (x, k) => (x[k] == null ? null : x[k] / nDays(x));
+
+  $("#period-label").textContent = periodLabel(mode, s.from, s.to);
+  $("#period-next").disabled = s.to >= a.todayKey;
+  document.querySelectorAll(".segmented button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === mode));
+  if (state.tab === "stats") {
+    $("#headline").textContent = "Fitness Analytics";
+    $("#subline").textContent = MODE_TITLE[mode];
+  }
+
+  const hours = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).padStart(2, "0")}m`;
+  $("#stats-kpis").innerHTML = [
+    statKpi({ label: "Schritte", value: s.steps != null ? Math.round(s.steps).toLocaleString("de-DE") : "–", icon: "steps", color: "var(--c-cyan)", delta: deltaHtml(perDay(s, "steps"), perDay(prev, "steps"), prevName) }),
+    statKpi({ label: "Kalorien", value: s.calories != null ? Math.round(s.calories).toLocaleString("de-DE") : "–", unit: "kcal", icon: "fire", color: "var(--c-pink)", delta: deltaHtml(perDay(s, "calories"), perDay(prev, "calories"), prevName) }),
+    statKpi({ label: "Trainingszeit", value: hours(s.trainingMin), icon: "timer", color: "var(--c-orange)", delta: deltaHtml(perDay(s, "trainingMin") || null, perDay(prev, "trainingMin") || null, prevName) }),
+    statKpi({ label: "Erholung", value: s.readiness ?? "–", unit: s.readiness != null ? "%" : "", icon: "heart", color: "var(--c-lime)", delta: deltaHtml(s.readiness, prev.readiness, prevName) }),
+  ].join("");
+
+  // Schritte-Ring
+  $("#ring-title").textContent = mode === "day" ? "Schritte heute" : "Schritte";
+  $("#ring-sub").textContent = mode === "day" ? "Tagesziel" : `Ziel: ${nDays(s)} × Tagesziel`;
+  if (s.steps != null) {
+    const ring = $("#steps-ring");
+    ring.innerHTML = '<div class="ring-svg"></div><div class="mini-stats"></div>';
+    SC.heroRing(ring.querySelector(".ring-svg"), s.steps, s.stepGoal, { label: "Schritte" });
+    ring.querySelector(".mini-stats").innerHTML = `
+      <div><b style="color:var(--c-lime)">${s.distanceKm != null ? num(s.distanceKm, 1) : "–"}</b><span>km</span></div>
+      <div><b style="color:var(--c-pink)">${s.activeCalories != null ? Math.round(s.activeCalories).toLocaleString("de-DE") : "–"}</b><span>aktive kcal</span></div>
+      <div><b style="color:var(--c-violet)">${s.sessions}</b><span>Einheiten</span></div>`;
+  } else {
+    $("#steps-ring").innerHTML = '<p class="hint">Keine Schrittdaten für diesen Zeitraum (nach Synchronisation mit Garmin Connect verfügbar).</p>';
+  }
+
+  // Trend und Tagesbalken; in der Tagesansicht zeigt der Trend die Woche um den Tag
+  const context = mode === "day" ? P.summarize(data, a, "week", state.period.anchor).days : s.days;
+  const metric = $("#trend-metric").value;
+  const unitOf = { steps: "", calories: " kcal", trainingMin: " min", sleepHours: " h", hrv: " ms", readiness: "" };
+  $("#trend-title").textContent = mode === "day" ? "Aktivitätstrend · Woche" : "Aktivitätstrend";
+  SC.areaTrend($("#trend-chart"), context, metric, { unit: unitOf[metric], decimals: metric === "sleepHours" ? 1 : 0 });
+  const barMetric = $("#bar-metric").value;
+  SC.dayBars($("#bar-chart"), context, barMetric, {
+    gradient: barMetric === "calories" ? "url(#grad-pink)" : barMetric === "trainingMin" ? "url(#grad-orange)" : "url(#grad-cyan)",
+    highlight: mode === "day" ? state.period.anchor : a.todayKey,
+    unit: unitOf[barMetric],
+  });
+
+  // Trainingsverteilung
+  const totalMix = s.sportMix.reduce((t, x) => t + x.minutes, 0);
+  $("#mix-sub").textContent = totalMix ? `${hours(totalMix)} gesamt` : "";
+  $("#mix-chart").innerHTML = totalMix
+    ? `<div class="donut-wrap"><div class="donut"></div><div class="mix-list">${s.sportMix.map((x) => `<div><span class="dot" style="background:${SPORT_COLOR[x.sport]};color:${SPORT_COLOR[x.sport]}"></span>${esc(x.label)}<strong>${hours(x.minutes)}</strong></div>`).join("")}</div></div>`
+    : '<p class="hint">Keine Trainingseinheiten in diesem Zeitraum.</p>';
+  if (totalMix) {
+    SC.donut($("#mix-chart .donut"), s.sportMix.map((x) => ({ value: x.minutes, color: SPORT_COLOR[x.sport], label: x.label })), { center: hours(totalMix), centerSub: "Gesamt" });
+  }
+
+  // Erholungsstatus
+  const score = mode === "day" ? s.days[0]?.readiness : s.readiness;
+  const label = score == null ? "keine Daten" : score >= 70 ? "Sehr gut" : score >= 50 ? "Mittel" : "Erholung nötig";
+  const color = score == null ? "var(--muted)" : score >= 70 ? "var(--c-cyan)" : score >= 50 ? "var(--warn)" : "var(--c-pink)";
+  $("#recovery-gauge").innerHTML = `<div class="gauge"><div class="gauge-svg"></div>
+    <div class="hint">${score == null ? "" : score >= 70 ? "Dein Körper ist bereit für neue Herausforderungen." : score >= 50 ? "Normal belastbar – intensive Reize gezielt setzen." : "Belastung reduzieren und Schlaf priorisieren."}</div>
+    <div class="gauge-rows">
+      <div><span>HRV</span><strong>${s.hrv != null ? `${Math.round(s.hrv)} ms` : "–"}</strong></div>
+      <div><span>Ruhepuls</span><strong>${s.restingHr != null ? `${Math.round(s.restingHr)} bpm` : "–"}</strong></div>
+      <div><span>Schlaf</span><strong>${s.sleepHours != null ? hours(s.sleepHours * 60) : "–"}</strong></div>
+    </div></div>`;
+  SC.gauge($("#recovery-gauge .gauge"), score, label, color);
+
+  // Schlafphasen
+  const st = s.stages;
+  const night = mode === "day" ? s.dayDetail?.sleepLevels : null;
+  $("#sleep-sub").textContent = mode === "day" ? "Nacht vor dem Tag" : "Ø pro Nacht";
+  if (st) {
+    const totalSleep = st.deep + st.light + st.rem;
+    $("#stats-sleep").innerHTML = `<div class="sleep-summary"><div><div class="sleep-total">${hours(totalSleep)}</div><span class="card-sub">Schlafdauer</span></div>
+      <div class="sleep-list">${[["awake", "Wach"], ["rem", "REM"], ["light", "Leicht"], ["deep", "Tief"]].map(([k, l]) => `<div><span class="dot" style="background:var(--stage-${k});color:var(--stage-${k})"></span>${l}<strong>${hours(st[k])}</strong></div>`).join("")}</div></div>
+      <div class="chart" id="stats-sleep-chart"></div>`;
+    if (night) SC.hypnogram($("#stats-sleep-chart"), night);
+    else {
+      const rows = s.days.filter((d) => !d.future).map((d) => ({ date: d.date, values: (data.daily || []).find((x) => x.date === d.date)?.sleepStages || {} }));
+      stackedBars($("#stats-sleep-chart"), rows, STAGES, { height: 170 });
+    }
+  } else {
+    $("#stats-sleep").innerHTML = '<p class="hint">Keine Schlafphasen für diesen Zeitraum.</p>';
+  }
+
+  // Herzfrequenz: Tagesverlauf in der Tagesansicht, sonst Ruhepuls je Tag
+  const hrDay = mode === "day" ? s.dayDetail?.hrDay : null;
+  if (hrDay && hrDay.some((v) => v != null)) {
+    const vals = hrDay.filter((v) => v != null);
+    const last = vals.at(-1);
+    $("#hr-sub").textContent = "Tagesverlauf";
+    $("#stats-hr").innerHTML = `<div class="hr-head"><div class="hr-now"><span class="heart">♥</span>${last}<small>bpm</small></div>
+      <div class="hr-meta">Ø ${Math.round(vals.reduce((t, v) => t + v, 0) / vals.length)} bpm · Max ${Math.max(...vals)} bpm · Ruhepuls ${s.restingHr ?? "–"} bpm</div></div><div class="chart" id="hr-day-chart"></div>`;
+    SC.hrDayChart($("#hr-day-chart"), hrDay);
+  } else {
+    const series = s.days.filter((d) => d.restingHr != null).map((d) => ({ date: d.date, value: d.restingHr }));
+    $("#hr-sub").textContent = mode === "day" ? "kein Tagesverlauf vorhanden" : "Ruhepuls je Tag";
+    $("#stats-hr").innerHTML = `<div class="hr-head"><div class="hr-now"><span class="heart">♥</span>${s.restingHr != null ? Math.round(s.restingHr) : "–"}<small>bpm Ø Ruhepuls</small></div></div><div class="chart" id="hr-rest-chart"></div>`;
+    lineChart($("#hr-rest-chart"), series, { label: "Ruhepuls", unit: " bpm", color: "var(--c-pink)", height: 170 });
+  }
+}
+
+// ---------- Seitenleiste ----------
+
+function renderSidebar(data, a) {
+  const name = data.source === "demo" ? "Demo-Athlet" : data.profile?.name || "Athlet";
+  $("#avatar").textContent = name.split(" ").map((x) => x[0]).join("").slice(0, 2).toUpperCase();
+  $("#profile-name").textContent = name;
+  const vo2 = I.vo2maxTrend(data, a.todayKey);
+  $("#profile-level").innerHTML = `Fitness ${Math.round(a.ctl)}${vo2 ? ` · <b>VO2max ${num(vo2.latest, 1)}</b>` : ""}`;
+  const r = a.readiness;
+  const [cls, txt] = { good: ["good", "Bereit"], normal: ["warn", "Normal belastbar"], low: ["critical", "Erholung empfohlen"] }[r.status] || ["", "keine Daten"];
+  $("#profile-status").innerHTML = `<span class="dot ${cls}"></span>${txt}`;
+  $(".connection").classList.toggle("demo", data.source !== "garmin");
+}
+
 // ---------- Garmin Connect ----------
 
 $("#btn-sync").addEventListener("click", async () => {
@@ -624,13 +808,15 @@ $("#live-stop").addEventListener("click", () => state.ble?.disconnect());
 // ---------- Reiter ----------
 
 function showTab(name) {
-  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
+  state.tab = name;
+  document.querySelectorAll(".nav button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== name));
   store.set("tab", name);
+  window.scrollTo({ top: 0 });
   // Diagramme in vorher verborgenen Reitern brauchen die echte Breite
   if (state.analysis) render();
 }
-$(".tabs").addEventListener("click", (e) => {
+$(".nav").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-tab]");
   if (b) showTab(b.dataset.tab);
 });
@@ -638,6 +824,27 @@ $(".tabs").addEventListener("click", (e) => {
 // ---------- Workouts senden ----------
 
 $("#workout-day").addEventListener("change", renderWorkoutPreview);
+
+// ---------- Zeitraum der Statistik ----------
+
+$(".segmented").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-mode]");
+  if (!b) return;
+  state.period.mode = b.dataset.mode;
+  store.set("periodMode", b.dataset.mode);
+  renderStats(state.merged, state.analysis);
+});
+$("#period-prev").addEventListener("click", () => {
+  state.period.anchor = P.shiftAnchor(state.period.mode, state.period.anchor, -1);
+  renderStats(state.merged, state.analysis);
+});
+$("#period-next").addEventListener("click", () => {
+  const next = P.shiftAnchor(state.period.mode, state.period.anchor, 1);
+  state.period.anchor = next > state.analysis.todayKey ? state.analysis.todayKey : next;
+  renderStats(state.merged, state.analysis);
+});
+$("#trend-metric").addEventListener("change", () => renderStats(state.merged, state.analysis));
+$("#bar-metric").addEventListener("change", () => renderStats(state.merged, state.analysis));
 
 $("#workout-send").addEventListener("click", async () => {
   const w = currentWorkout();
@@ -776,9 +983,7 @@ window.addEventListener("resize", () => {
   }, 150);
 });
 
-const savedTab = store.get("tab", "overview");
-if (savedTab !== "overview" && document.querySelector(`.tabs button[data-tab="${savedTab}"]`)) {
-  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === savedTab));
-  document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== savedTab));
-}
+if (!document.querySelector(`.nav button[data-tab="${state.tab}"]`)) state.tab = "overview";
+document.querySelectorAll(".nav button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === state.tab));
+document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== state.tab));
 load();

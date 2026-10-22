@@ -121,3 +121,25 @@ test("Strukturiertes Intervall-Workout für Garmin Connect und FIT", () => {
 
   assert.equal(buildWorkout({ sport: "strength", intensity: "easy", durationMin: 40, date: TODAY }, p), null);
 });
+
+import { periodRange, shiftAnchor, summarize } from "../web/js/period.js";
+
+test("Zeiträume Tag, Woche und Monat", () => {
+  assert.deepEqual(periodRange("day", TODAY), { from: TODAY, to: TODAY });
+  assert.deepEqual(periodRange("week", TODAY), { from: "2026-10-19", to: "2026-10-25" });
+  assert.deepEqual(periodRange("month", "2026-02-10"), { from: "2026-02-01", to: "2026-02-28" });
+  assert.equal(shiftAnchor("month", "2026-01-31", -1), "2025-12-01");
+  assert.equal(shiftAnchor("week", TODAY, -1), "2026-10-15");
+});
+
+test("Wochenzusammenfassung zählt nur vergangene Tage", () => {
+  const data = demoData(TODAY);
+  const a = analyze(data, TODAY);
+  const s = summarize(data, a, "week", TODAY);
+  assert.equal(s.days.length, 7);
+  assert.equal(s.days.filter((d) => d.future).length, 3);
+  const expected = data.daily.filter((d) => d.date >= "2026-10-19" && d.date <= TODAY).reduce((t, d) => t + d.steps, 0);
+  assert.equal(s.steps, expected);
+  assert.equal(s.stepGoal, 4 * 10000);
+  assert.ok(s.sportMix.length > 0 && s.stages.deep > 0);
+});

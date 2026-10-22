@@ -8,7 +8,7 @@ nächsten 7 Tage an den aktuellen Zustand anpasst.
 
 | Quelle | Was wird übertragen | Voraussetzung |
 |---|---|---|
-| **Garmin Connect** | Aktivitäten (120 Tage) inkl. Trainingslast, Trainingseffekt und VO2max; HRV (Herzfrequenzvariabilität) mit Status, Ruhepuls, Schlafphasen, Atemfrequenz, Body Battery, Stress | lokaler Server (`server.py`), Garmin-Konto |
+| **Garmin Connect** | Aktivitäten (120 Tage) inkl. Trainingslast, Trainingseffekt und VO2max; Schritte, Kalorien und Distanz je Tag (62 Tage); Herzfrequenz-Tagesverlauf und Schlafphasen-Verlauf (14 Tage); HRV (Herzfrequenzvariabilität) mit Status, Ruhepuls, Schlafphasen, Atemfrequenz, Body Battery, Stress | lokaler Server (`server.py`), Garmin-Konto |
 | **FIT-Import** | einzelne Aktivitäten inkl. Pulsverlauf | `.fit`-Dateien aus `GARMIN/Activity` (Uhr per USB anschließen) |
 | **Bluetooth** | Live-Herzfrequenz, optional als Einheit aufzeichnen | Chrome/Edge (Desktop oder Android), auf der Uhr „Herzfrequenz übertragen“ aktivieren |
 
@@ -52,9 +52,10 @@ statischen Webserver ausliefern (z. B. `python -m http.server -d web`).
 
 | Reiter | Inhalt |
 |---|---|
+| Statistik | Tag, Woche oder Monat im Neon-Dashboard-Stil: Schritte (Ring mit Ziel), Kalorien, Trainingszeit und Erholung mit Vergleich zum Vorzeitraum, Aktivitätstrend, Tagesleistung, Trainingsverteilung, Erholungsstatus, Schlafphasen (Hypnogramm in der Tagesansicht), Herzfrequenz im Tagesverlauf |
 | Übersicht | Kennzahlen, Tabelle der letzten 7 Tage (Schlaf, HRV, Ruhepuls, Body Battery, Belastung, Readiness), 7-Tage-Empfehlung, Fitness-/Ermüdungsverlauf, Coach-Hinweise |
 | Training | VO2max (maximale Sauerstoffaufnahme) mit Trend über 4 und 12 Wochen, Belastungssteuerung (TRIMP und Garmin-Trainingslast), aerober/anaerober Trainingseffekt, Pace und Herzfrequenz, Wochenumfang, Intensitätsverteilung, Aktivitäten |
-| Regeneration | Schlafarchitektur (Tief-, Leicht-, REM-Schlaf, Wachphasen), HRV-Verlauf mit Normalbereich, Ruhepuls, Atemfrequenz, Body Battery, Stress |
+| Erholung | Schlafarchitektur (Tief-, Leicht-, REM-Schlaf, Wachphasen), HRV-Verlauf mit Normalbereich, Ruhepuls, Atemfrequenz, Body Battery, Stress |
 | Muster | Illness-Score, wöchentliche Bereitschaft (Readiness), Zusammenhänge zwischen Schlaf, Belastung, HRV und Laufeffizienz |
 | Workouts | Strukturiertes Workout aus der Tagesempfehlung; senden an Garmin Connect (Kalender) oder als FIT-Datei herunterladen |
 
@@ -109,6 +110,8 @@ web/styles.css        Gestaltung (hell/dunkel nach Systemeinstellung)
 web/js/analysis.js    Belastung, Readiness, Tipps, Wochenvorschläge
 web/js/insights.js    VO2max, Effizienz, Schlafarchitektur, Illness-Score, Muster
 web/js/workouts.js    strukturierte Workouts (Garmin Connect, FIT)
+web/js/period.js      Zusammenfassung von Tag, Woche, Monat
+web/js/stats-charts.js  Neon-Diagramme (Ring, Donut, Gauge, Hypnogramm, Tagespuls)
 web/js/charts.js      SVG-Diagramme
 web/js/bluetooth.js   Live-Puls per Web Bluetooth
 web/js/fit-import.js  FIT-Dateien über das Garmin FIT SDK

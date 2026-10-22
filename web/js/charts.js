@@ -1,22 +1,22 @@
 // Schlanke SVG-Diagramme mit Hover-Tooltip, ohne externe Bibliothek.
 
 const NS = "http://www.w3.org/2000/svg";
-const fmtDate = (k) => new Date(`${k}T12:00:00`).toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
+export const fmtDate = (k) => new Date(`${k}T12:00:00`).toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
 
-function el(name, attrs = {}, parent) {
+export function el(name, attrs = {}, parent) {
   const n = document.createElementNS(NS, name);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v);
   if (parent) parent.appendChild(n);
   return n;
 }
 
-function niceMax(v) {
+export function niceMax(v) {
   if (v <= 0) return 10;
   const p = 10 ** Math.floor(Math.log10(v));
   return [1, 2, 2.5, 5, 10].map((m) => m * p).find((m) => m >= v);
 }
 
-function frame(container, height) {
+export function frame(container, height) {
   container.innerHTML = "";
   const width = Math.max(280, container.clientWidth || 600);
   const svg = el("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" }, container);
@@ -27,7 +27,7 @@ function frame(container, height) {
   return { svg, tip, width };
 }
 
-function yAxis(svg, { left, right, top, bottom, max, ticks = 5 }) {
+export function yAxis(svg, { left, right, top, bottom, max, ticks = 5 }) {
   for (let i = 0; i <= ticks; i++) {
     const v = (max / ticks) * i;
     const y = bottom - ((bottom - top) * i) / ticks;
@@ -36,7 +36,7 @@ function yAxis(svg, { left, right, top, bottom, max, ticks = 5 }) {
   }
 }
 
-function showTip(tip, container, x, y, html) {
+export function showTip(tip, container, x, y, html) {
   tip.innerHTML = html;
   tip.hidden = false;
   const half = tip.offsetWidth / 2;
@@ -44,7 +44,7 @@ function showTip(tip, container, x, y, html) {
   tip.style.top = `${y}px`;
 }
 
-const row = (color, label, value) =>
+export const row = (color, label, value) =>
   `<div class="row">${color ? `<span class="dot" style="background:${color}"></span>` : ""}${label}<strong>${value}</strong></div>`;
 
 // Fitness (CTL) und Ermüdung (ATL) als Linien, Tageslast als Balken – eine gemeinsame Achse (TRIMP-Punkte).
@@ -67,7 +67,7 @@ export function pmcChart(container, model) {
   });
   for (const [key, color] of [["ctl", "var(--series-1)"], ["atl", "var(--series-2)"]]) {
     const d = model.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join("");
-    el("path", { d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    el("path", { d, class: "line", fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
   }
   for (let i = model.length - 1; i >= 0; i -= 21) {
     el("text", { x: x(i), y: H - 6, "text-anchor": "middle" }, svg).textContent = fmtDate(model[i].date);
@@ -119,8 +119,8 @@ export function weekChart(container, weeks) {
     if (h > 0) {
       el("path", {
         d: `M${cx - bw / 2},${b} V${b - h + 4} q0,-4 4,-4 H${cx + bw / 2 - 4} q4,0 4,4 V${b} Z`,
-        fill: "var(--series-1)",
-        opacity: current ? 0.45 : 1,
+        fill: "url(#grad-cyan)",
+        opacity: current ? 0.5 : 1,
       }, svg);
     }
     if (step >= 48 || (weeks.length - 1 - i) % 2 === 0) {
@@ -182,7 +182,7 @@ export function lineChart(container, series, { color = "var(--series-1)", band =
   }
   el("path", {
     d: series.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join(""),
-    fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round",
+    class: "line", fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round",
   }, svg);
   const lastI = series.length - 1;
   el("circle", { cx: x(lastI), cy: y(series[lastI].value), r: 4, fill: color, stroke: "var(--surface)", "stroke-width": 2 }, svg);
