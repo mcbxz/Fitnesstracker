@@ -15,6 +15,7 @@ import json
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
+from itertools import permutations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -98,7 +99,26 @@ def _activity(raw: dict) -> dict:
     }
 
 
-SLEEP_LEVELS = {0: "deep", 1: "light", 2: "rem", 3: "awake"}  # activityLevel in sleepLevels
+# Garmin unterscheidet vier Schlafphasen: tief, leicht, REM und wach.
+# Vermutete Kodierung von activityLevel in sleepLevels; wird je Nacht gegen die Phasensummen geprüft.
+SLEEP_LEVELS = {0: "deep", 1: "light", 2: "rem", 3: "awake"}
+STAGE_FIELDS = {"deep": "deepSleepSeconds", "light": "lightSleepSeconds", "rem": "remSleepSeconds", "awake": "awakeSleepSeconds"}
+
+
+def _level_mapping(durations: dict[int, float], dto: dict) -> dict[int, str]:
+    """Ordnet die Zahlencodes den Phasen so zu, dass die Minuten zu Garmins Phasensummen passen."""
+    totals = {stage: (dto.get(field) or 0) / 60 for stage, field in STAGE_FIELDS.items()}
+    if not any(totals.values()):
+        return SLEEP_LEVELS
+    codes = sorted(durations)
+    best, best_err = SLEEP_LEVELS, None
+    for stages in permutations(STAGE_FIELDS, len(codes)):
+        err = sum(abs(durations[c] - totals[st]) for c, st in zip(codes, stages))
+        if best_err is None or err < best_err:
+            best, best_err = dict(zip(codes, stages)), err
+    # Die Standardzuordnung behalten, wenn sie praktisch genauso gut passt
+    default_err = sum(abs(durations[c] - totals.get(SLEEP_LEVELS.get(c, ""), 0)) for c in codes)
+    return SLEEP_LEVELS if default_err <= best_err + 1 else best
 
 
 def _hypnogram(sleep_raw: dict, dto: dict) -> dict | None:
@@ -113,11 +133,16 @@ def _hypnogram(sleep_raw: dict, dto: dict) -> dict | None:
         t = datetime.fromisoformat(ts.replace("Z", "")).replace(tzinfo=timezone.utc)
         return round((t.timestamp() * 1000 - start_gmt) / 60000)
 
-    segments = []
-    for lv in levels:
-        level = SLEEP_LEVELS.get(round(lv.get("activityLevel", -1)))
-        if level and lv.get("startGMT") and lv.get("endGMT"):
-            segments.append([minutes(lv["startGMT"]), minutes(lv["endGMT"]), level])
+    raw_segments = [
+        (minutes(lv["startGMT"]), minutes(lv["endGMT"]), round(lv["activityLevel"]))
+        for lv in levels
+        if lv.get("startGMT") and lv.get("endGMT") and lv.get("activityLevel") is not None
+    ]
+    durations: dict[int, float] = {}
+    for a, b, code in raw_segments:
+        durations[code] = durations.get(code, 0) + (b - a)
+    mapping = _level_mapping(durations, dto) if 0 < len(durations) <= 4 else SLEEP_LEVELS
+    segments = [[a, b, mapping[code]] for a, b, code in raw_segments if code in mapping]
     start = datetime.fromtimestamp(start_local / 1000, tz=timezone.utc).strftime("%H:%M")
     return {"start": start, "segments": segments} if segments else None
 

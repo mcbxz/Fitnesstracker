@@ -116,5 +116,5 @@ web/js/charts.js      SVG-Diagramme
 web/js/bluetooth.js   Live-Puls per Web Bluetooth
 web/js/fit-import.js  FIT-Dateien über das Garmin FIT SDK
 web/js/demo.js        Beispieldaten
-tests/                Tests: node --test tests/*.test.mjs
+tests/                Tests: node --test tests/*.test.mjs · python -m unittest tests/test_garmin_sync.py
 ```
