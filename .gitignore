@@ -1,0 +1,5 @@
+__pycache__/
+.venv/
+data/garmin.json
+data/plan.json
+.env
