@@ -168,7 +168,8 @@ export function intensityDistribution(activities, p, fromKey) {
   return { seconds: sum, share: sum.map((v) => (total ? v / total : 0)), total };
 }
 
-export function weeklyVolume(activities, endKey, weeks) {
+export function weeklyVolume(activities, endKey, weeks, daily = []) {
+  const dataDates = new Set([...daily.map((d) => d.date), ...activities.map((a) => a.start.slice(0, 10))]);
   const monday = addDays(endKey, -weekdayIndex(endKey));
   const out = [];
   for (let w = weeks - 1; w >= 0; w--) {
@@ -184,6 +185,8 @@ export function weeklyVolume(activities, endKey, weeks) {
       km: acts.reduce((s, a) => s + (a.distanceM || 0) / 1000, 0),
       count: acts.length,
       strengthDays: new Set(acts.filter((a) => a.sport === "strength").map((a) => a.start.slice(0, 10))).size,
+      // Tage mit überhaupt vorhandenen Daten, damit fehlende Aufzeichnung nicht als Trainingspause gilt
+      coveredDays: [0, 1, 2, 3, 4, 5, 6].filter((i) => dataDates.has(addDays(start, i))).length,
     });
   }
   return out;
@@ -272,7 +275,7 @@ export function analyze(data, todayKey = dateKey(new Date())) {
     acwr: acwr(loads),
     monotony: monotony(loads),
     distribution: intensityDistribution(data.activities, p, addDays(todayKey, -27)),
-    weeks: weeklyVolume(data.activities, todayKey, 8),
+    weeks: weeklyVolume(data.activities, todayKey, 8, data.daily || []),
     readiness: readinessWeek[readinessWeek.length - 1],
     readinessWeek,
     weeklyReadiness: weeklyReadiness(readinessWeek),
@@ -359,7 +362,8 @@ export function tips(a) {
       source: "foster",
     });
   }
-  const lastFull = a.weeks[a.weeks.length - 2];
+  const weekCovered = a.weeks[a.weeks.length - 2];
+  const lastFull = weekCovered && weekCovered.coveredDays >= 5 ? weekCovered : null;
   if (lastFull && lastFull.minutes < 150) {
     out.push({
       level: "info",

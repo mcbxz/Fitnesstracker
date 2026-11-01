@@ -9,6 +9,7 @@ import { parseFitFile, loadFitSdk } from "./fit-import.js";
 import * as I from "./insights.js";
 import { buildWorkout, toGarminWorkout, encodeFitWorkout, totalSeconds } from "./workouts.js";
 import * as P from "./period.js";
+import { mergeDaily } from "./wellness.js";
 import * as SC from "./stats-charts.js";
 import { cite } from "./sources.js";
 
@@ -51,6 +52,7 @@ const state = {
   plan: store.get("plan", DEFAULT_PLAN),
   profileOverrides: store.get("profile", {}),
   imported: store.get("imported", []),
+  importedDaily: store.get("importedDaily", []),
   analysis: null,
   selectedDay: 0,
   tab: store.get("tab", "overview"),
@@ -86,6 +88,13 @@ async function load() {
   } catch {
     state.data = demoData();
   }
+  if (state.data.source === "demo") {
+    // Statisch veröffentlichte eigene Daten (z. B. aus FIT-Dateien) haben Vorrang vor den Beispieldaten
+    try {
+      const { ok, body } = await fetchJson("data/user-data.json");
+      if (ok && Array.isArray(body.daily)) state.data = body;
+    } catch { /* keine eigenen Daten veröffentlicht */ }
+  }
   if (state.server) {
     try {
       const { ok, body } = await fetchJson("api/plan");
@@ -96,8 +105,11 @@ async function load() {
 }
 
 function mergedData() {
+  // Sobald eigene Daten importiert sind, werden sie nicht mit Beispieldaten vermischt
+  const ownImports = state.importedDaily.length || state.imported.length;
+  const base = state.data.source === "demo" && ownImports ? { source: "fit", syncedAt: null, profile: {}, activities: [], daily: [] } : state.data;
   const seen = new Set();
-  const activities = [...state.data.activities, ...state.imported]
+  const activities = [...base.activities, ...state.imported]
     .filter((a) => {
       const key = a.start.slice(0, 16);
       if (seen.has(key)) return false;
@@ -106,9 +118,10 @@ function mergedData() {
     })
     .sort((a, b) => a.start.localeCompare(b.start));
   return {
-    ...state.data,
-    profile: { ...state.data.profile, ...state.profileOverrides },
+    ...base,
+    profile: { ...base.profile, ...state.profileOverrides },
     activities,
+    daily: mergeDaily(base.daily || [], state.importedDaily),
   };
 }
 
@@ -151,8 +164,12 @@ function renderHeader(data, a, today) {
   const badge = $("#source-badge");
   if (data.source === "garmin") {
     badge.textContent = `Garmin Connect verbunden · ${new Date(data.syncedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`;
+  } else if (data.source === "fit") {
+    const days = (data.daily || []).length;
+    const device = { instinctSolar: "Instinct Solar" }[data.device] || data.device;
+    badge.textContent = `Eigene Daten${device ? ` · ${device}` : " (FIT)"} · ${days} Tag${days === 1 ? "" : "e"}, ${data.activities.length} Aktivität${data.activities.length === 1 ? "" : "en"}`;
   } else {
-    badge.textContent = state.imported.length ? `Beispieldaten + ${state.imported.length} importiert` : "Beispieldaten";
+    badge.textContent = "Beispieldaten";
   }
   $("#footer").innerHTML = `Die Empfehlungen sind trainingswissenschaftlich begründete Richtwerte und ersetzen keine ärztliche oder trainerische Beratung. Maximalpuls: ${a.profile.hrMax} bpm (${a.profile.hrMaxSource}${a.profile.hrMaxSource === "Tanaka-Formel" ? `, ${cite("tanaka")}` : ""}), Ruhepuls: ${a.profile.hrRest} bpm. Live-Puls: ${cite("bleHr")} · FIT-Import: ${cite("fit")}`;
 }
@@ -323,6 +340,7 @@ function renderLast7(data, a) {
     <thead><tr><th>Tag</th><th class="num">Schlaf</th><th class="num">Score</th><th class="num">Tief / REM</th><th class="num">HRV</th><th class="num">Ruhepuls</th><th class="num">Body Battery</th><th class="num">Belastung</th><th>Training</th><th class="num">Readiness</th></tr></thead>
     <tbody>${rows.map((r) => {
       const st = HRV_STATUS[r.hrvStatus];
+      if (!r.hasData) return `<tr><td>${r.date === a.todayKey ? "Heute" : fmtDay(r.date)}</td><td colspan="9" class="sub">keine Daten aufgezeichnet bzw. importiert</td></tr>`;
       return `<tr>
         <td>${r.date === a.todayKey ? "Heute" : fmtDay(r.date)}</td>
         <td class="num">${r.sleepHours ? `${num(r.sleepHours, 1)} h` : "–"}</td>
@@ -332,7 +350,7 @@ function renderLast7(data, a) {
         <td class="num">${r.restingHr ? `${r.restingHr} bpm` : "–"}</td>
         <td class="num">${r.bodyBattery ?? "–"}</td>
         <td class="num">${Math.round(r.trimp)}${hasGarminLoad && r.garminLoad ? `<span class="sub">Garmin ${r.garminLoad}</span>` : ""}</td>
-        <td>${r.sessions.length ? esc(r.sessions.join(", ")) : '<span class="sub">Ruhetag</span>'}</td>
+        <td>${r.sessions.length ? esc(r.sessions.join(", ")) : '<span class="sub">kein Training</span>'}</td>
         <td class="num">${r.readiness != null ? `${scoreDot(r.readiness)} ${r.readiness}` : "–"}</td>
       </tr>`;
     }).join("")}</tbody>`;
@@ -714,18 +732,26 @@ $("#fit-input").addEventListener("change", async (e) => {
   const files = [...e.target.files];
   e.target.value = "";
   const acts = [];
+  let days = [];
+  const notes = [];
   for (const f of files) {
     try {
-      acts.push(await parseFitFile(f, state.analysis.profile));
+      const result = await parseFitFile(f, state.analysis.profile);
+      if (result.kind === "activity") acts.push(result.activity);
+      else days = mergeDaily(days, result.days);
+      if (result.note) notes.push(result.note);
     } catch (err) {
-      toast(err.message, 6000);
+      notes.push(err.message);
     }
   }
-  if (acts.length) {
-    saveImported(acts);
-    render();
-    toast(`${acts.length} FIT-Datei${acts.length > 1 ? "en" : ""} importiert.`);
+  if (acts.length) saveImported(acts);
+  if (days.length) {
+    state.importedDaily = mergeDaily(state.importedDaily, days);
+    store.set("importedDaily", state.importedDaily);
   }
+  if (acts.length || days.length) render();
+  const done = [acts.length && `${acts.length} Aktivität${acts.length > 1 ? "en" : ""}`, days.length && `Tageswerte für ${days.length} Tag${days.length > 1 ? "e" : ""}`].filter(Boolean);
+  toast([done.length ? `Importiert: ${done.join(", ")}.` : "", ...notes].filter(Boolean).join(" "), 8000);
 });
 
 // ---------- Bluetooth ----------
@@ -956,6 +982,15 @@ $("#btn-profile").addEventListener("click", () => {
 
 $("#profile-dialog").addEventListener("close", () => {
   const rv = $("#profile-dialog").returnValue;
+  if (rv === "clear-imports") {
+    state.imported = [];
+    state.importedDaily = [];
+    store.set("imported", []);
+    store.set("importedDaily", []);
+    render();
+    toast("Importierte Aktivitäten und Tageswerte entfernt.");
+    return;
+  }
   if (rv === "reset") state.profileOverrides = {};
   else if (rv === "save") {
     const f = $("#profile-dialog form");

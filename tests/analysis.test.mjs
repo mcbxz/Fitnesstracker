@@ -143,3 +143,48 @@ test("Wochenzusammenfassung zählt nur vergangene Tage", () => {
   assert.equal(s.stepGoal, 4 * 10000);
   assert.ok(s.sportMix.length > 0 && s.stages.deep > 0);
 });
+
+import { parseWellness, parseSleep, mergeDaily } from "../web/js/wellness.js";
+
+test("Wellness-Datei: Tagessummen, Ruhepuls, Stress und Tagespuls in Ortszeit", () => {
+  const utc = (iso) => new Date(iso);
+  const fitSec = (iso) => Math.round(new Date(iso).getTime() / 1000) - 631065600;
+  const base = "2026-11-01T17:17:00Z";
+  const messages = {
+    fileIdMesgs: [{ type: "monitoringB" }],
+    monitoringInfoMesgs: [{ timestamp: utc(base), localTimestamp: fitSec(base) + 3600, restingMetabolicRate: 2339 }],
+    monitoringMesgs: [
+      { timestamp: utc(base), durationMin: 1097, activityType: "walking", steps: 9375, distance: 7805.64, activeCalories: 191 },
+      { timestamp16: (fitSec(base) + 60) & 0xffff, heartRate: 98 },
+      { timestamp: utc("2026-11-01T17:59:00Z"), durationMin: 1139, activityType: "walking", steps: 10017, distance: 8340.17, activeCalories: 215 },
+      { timestamp: utc("2026-11-01T17:59:00Z"), durationMin: 1139, activityType: "running", steps: 26, distance: 32.47, activeCalories: 0 },
+      { timestamp: utc("2026-11-01T17:59:00Z"), durationMin: 1139, activityType: "generic", activeCalories: 14, distance: 0 },
+    ],
+    monitoringHrDataMesgs: [{ timestamp: utc(base), restingHeartRate: 43, currentDayRestingHeartRate: 45 }],
+    stressLevelMesgs: [{ stressLevelTime: utc(base), stressLevelValue: -2 }, { stressLevelTime: utc(base), stressLevelValue: 40 }],
+  };
+  const [d] = parseWellness(messages);
+  assert.equal(d.date, "2026-11-01");
+  assert.equal(d.steps, 10043);
+  assert.equal(d.distanceKm, 8.37);
+  assert.equal(d.activeCalories, 229);
+  assert.equal(d.calories, 2339 + 229);
+  assert.equal(d.restingHr, 45);
+  assert.equal(d.stress, 40);
+  assert.equal(d.hrDay[109], 98); // 18:18 Ortszeit → Block 18:10
+});
+
+test("Schlafdatei: Phasen einer Nacht, reine Wachzeit wird verworfen", () => {
+  const at = (iso, sleepLevel) => ({ timestamp: new Date(iso), sleepLevel });
+  assert.equal(parseSleep({ sleepLevelMesgs: [at("2026-11-01T17:18:00Z", "awake"), at("2026-11-01T17:21:00Z", "awake")] }), null);
+  const night = parseSleep({
+    sleepLevelMesgs: [at("2026-10-31T22:00:00Z", "light"), at("2026-10-31T22:30:00Z", "deep"), at("2026-10-31T23:30:00Z", "rem"), at("2026-11-01T00:00:00Z", "awake"), at("2026-11-01T00:10:00Z", "light"), at("2026-11-01T05:00:00Z", "awake")],
+    273: [{ 2: 1000 + 3600, 253: 1000 }],
+  });
+  assert.equal(night.date, "2026-11-01");
+  assert.deepEqual(night.sleepStages, { light: 320, deep: 60, rem: 30, awake: 10 });
+  assert.equal(night.sleepLevels.start, "23:00");
+  const merged = mergeDaily([{ date: "2026-11-01", steps: 500 }], [night]);
+  assert.equal(merged[0].steps, 500);
+  assert.equal(merged[0].sleepHours, 6.83);
+});

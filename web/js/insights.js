@@ -52,6 +52,7 @@ export function last7Days(data, a) {
       garminLoad: acts.reduce((s, x) => s + (x.trainingLoad || 0), 0) || null,
       sessions: acts.map((x) => x.name),
       readiness: a.readinessWeek.find((r) => r.date === date)?.score ?? null,
+      hasData: acts.length > 0 || Object.keys(d).length > 0,
     });
   }
   return rows;

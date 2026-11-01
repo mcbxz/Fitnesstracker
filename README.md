@@ -9,10 +9,10 @@ nächsten 7 Tage an den aktuellen Zustand anpasst.
 | Quelle | Was wird übertragen | Voraussetzung |
 |---|---|---|
 | **Garmin Connect** | Aktivitäten (120 Tage) inkl. Trainingslast, Trainingseffekt und VO2max; Schritte, Kalorien und Distanz je Tag (62 Tage); Herzfrequenz-Tagesverlauf und Schlafphasen-Verlauf (14 Tage); HRV (Herzfrequenzvariabilität) mit Status, Ruhepuls, Schlafphasen, Atemfrequenz, Body Battery, Stress | lokaler Server (`server.py`), Garmin-Konto |
-| **FIT-Import** | einzelne Aktivitäten inkl. Pulsverlauf | `.fit`-Dateien aus `GARMIN/Activity` (Uhr per USB anschließen) |
+| **FIT-Import** | Aktivitäten inkl. Pulsverlauf (`GARMIN/Activity`); Tageswerte wie Schritte, Distanz, Kalorien, Ruhepuls, Stress und Tagespuls (`GARMIN/Monitor`); Schlafphasen (`GARMIN/Sleep`) | `.fit`-Dateien der Uhr (per USB anschließen); mehrere Dateien gleichzeitig auswählbar |
 | **Bluetooth** | Live-Herzfrequenz, optional als Einheit aufzeichnen | Chrome/Edge (Desktop oder Android), auf der Uhr „Herzfrequenz übertragen“ aktivieren |
 
-Ohne eigene Daten zeigt die Oberfläche Beispieldaten.
+Ohne eigene Daten zeigt die Oberfläche Beispieldaten. Sobald eigene Daten importiert sind, werden ausschließlich diese angezeigt; Tage ohne Aufzeichnung erscheinen als „keine Daten“. Importierte Daten lassen sich im Profil-Dialog wieder löschen.
 
 **Hinweise zu den Schnittstellen**
 
@@ -120,6 +120,7 @@ web/js/analysis.js    Belastung, Readiness, Tipps, Wochenvorschläge
 web/js/insights.js    VO2max, Effizienz, Schlafarchitektur, Illness-Score, Muster
 web/js/workouts.js    strukturierte Workouts (Garmin Connect, FIT)
 web/js/period.js      Zusammenfassung von Tag, Woche, Monat
+web/js/wellness.js    Wellness- und Schlafdateien (FIT) zu Tageswerten
 web/js/stats-charts.js  Neon-Diagramme (Ring, Donut, Gauge, Hypnogramm, Tagespuls)
 web/js/charts.js      SVG-Diagramme
 web/js/bluetooth.js   Live-Puls per Web Bluetooth
