@@ -53,6 +53,7 @@ const state = {
   profileOverrides: store.get("profile", {}),
   imported: store.get("imported", []),
   importedDaily: store.get("importedDaily", []),
+  importedProfile: store.get("importedProfile", {}),
   analysis: null,
   selectedDay: 0,
   tab: store.get("tab", "overview"),
@@ -119,7 +120,7 @@ function mergedData() {
     .sort((a, b) => a.start.localeCompare(b.start));
   return {
     ...base,
-    profile: { ...base.profile, ...state.profileOverrides },
+    profile: { ...base.profile, ...state.importedProfile, ...state.profileOverrides },
     activities,
     daily: mergeDaily(base.daily || [], state.importedDaily),
   };
@@ -540,7 +541,7 @@ function renderWorkoutPreview() {
 // ---------- Statistik: Tag / Woche / Monat ----------
 
 const MODE_TITLE = { day: "Tagesüberblick", week: "Wöchentlicher Überblick", month: "Monatsüberblick" };
-const SPORT_COLOR = { run: "var(--c-cyan)", strength: "var(--c-pink)", bike: "var(--c-orange)", swim: "var(--c-violet)", mobility: "var(--c-lime)", walk: "var(--c-lime)", other: "var(--muted)" };
+const SPORT_COLOR = { run: "var(--c-cyan)", strength: "var(--c-pink)", hiit: "var(--c-pink)", bike: "var(--c-orange)", swim: "var(--c-violet)", mobility: "var(--c-lime)", walk: "var(--c-lime)", hike: "var(--c-lime)", other: "var(--muted)" };
 const ICONS = {
   steps: '<path d="M8 3c2 0 3 2 3 5s-1 5-3 5-3-2-3-5 1-5 3-5ZM5 16h6l-1 4H6l-1-4ZM16 6c2 0 3 2 3 5s-1 5-3 5-3-2-3-5 1-5 3-5ZM13 19h6l-1 2h-4l-1-2Z"/>',
   fire: '<path d="M12 22c4 0 7-3 7-7 0-5-4-7-5-11-2 2-3 4-3 6-1-1-2-2-2-4-2 2-4 5-4 9 0 4 3 7 7 7Z"/>',
@@ -592,7 +593,7 @@ function renderStats(data, a) {
   const hours = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).padStart(2, "0")}m`;
   $("#stats-kpis").innerHTML = [
     statKpi({ label: "Schritte", value: s.steps != null ? Math.round(s.steps).toLocaleString("de-DE") : "–", icon: "steps", color: "var(--c-cyan)", delta: deltaHtml(perDay(s, "steps"), perDay(prev, "steps"), prevName) }),
-    statKpi({ label: "Kalorien", value: s.calories != null ? Math.round(s.calories).toLocaleString("de-DE") : "–", unit: "kcal", icon: "fire", color: "var(--c-pink)", delta: deltaHtml(perDay(s, "calories"), perDay(prev, "calories"), prevName) }),
+    statKpi({ label: s.caloriesTrainingOnly ? "Kalorien (nur Training)" : "Kalorien", value: s.calories != null ? Math.round(s.calories).toLocaleString("de-DE") : "–", unit: "kcal", icon: "fire", color: "var(--c-pink)", delta: deltaHtml(perDay(s, "calories"), perDay(prev, "calories"), prevName) }),
     statKpi({ label: "Trainingszeit", value: hours(s.trainingMin), icon: "timer", color: "var(--c-orange)", delta: deltaHtml(perDay(s, "trainingMin") || null, perDay(prev, "trainingMin") || null, prevName) }),
     statKpi({ label: "Erholung", value: s.readiness ?? "–", unit: s.readiness != null ? "%" : "", icon: "heart", color: "var(--c-lime)", delta: deltaHtml(s.readiness, prev.readiness, prevName) }),
   ].join("");
@@ -738,6 +739,7 @@ $("#fit-input").addEventListener("change", async (e) => {
     try {
       const result = await parseFitFile(f, state.analysis.profile);
       if (result.kind === "activity") acts.push(result.activity);
+      if (result.profile) Object.assign(state.importedProfile, result.profile);
       else days = mergeDaily(days, result.days);
       if (result.note) notes.push(result.note);
     } catch (err) {
@@ -745,6 +747,7 @@ $("#fit-input").addEventListener("change", async (e) => {
     }
   }
   if (acts.length) saveImported(acts);
+  store.set("importedProfile", state.importedProfile);
   if (days.length) {
     state.importedDaily = mergeDaily(state.importedDaily, days);
     store.set("importedDaily", state.importedDaily);
@@ -985,6 +988,8 @@ $("#profile-dialog").addEventListener("close", () => {
   if (rv === "clear-imports") {
     state.imported = [];
     state.importedDaily = [];
+    state.importedProfile = {};
+    store.set("importedProfile", {});
     store.set("imported", []);
     store.set("importedDaily", []);
     render();

@@ -188,3 +188,23 @@ test("Schlafdatei: Phasen einer Nacht, reine Wachzeit wird verworfen", () => {
   assert.equal(merged[0].steps, 500);
   assert.equal(merged[0].sleepHours, 6.83);
 });
+
+import { parseFitMessages } from "../web/js/fit-import.js";
+
+test("Aktivitätsdatei: Sportart, Ortszeit und Profilangaben der Uhr", () => {
+  const p = { hrMax: 196, hrRest: 50, lt1Pct: 0.8, lt2Pct: 0.88 };
+  const r = parseFitMessages({
+    sessionMesgs: [{ startTime: new Date("2026-06-05T05:34:11Z"), sport: "hiking", sportProfileName: "Wandern", totalTimerTime: 4979.7, totalDistance: 10967.2, avgHeartRate: 164, maxHeartRate: 185, totalCalories: 1254, totalAscent: 239, enhancedAvgSpeed: 2.2 }],
+    activityMesgs: [{ timestamp: new Date("2026-06-05T07:00:00Z"), localTimestamp: Math.round(Date.parse("2026-06-05T07:00:00Z") / 1000) - 631065600 + 7200 }],
+    recordMesgs: [{ timestamp: new Date("2026-06-05T05:34:11Z"), heartRate: 150 }, { timestamp: new Date("2026-06-05T05:34:21Z"), heartRate: 170 }],
+    userProfileMesgs: [{ gender: "male", weight: 90 }],
+    zonesTargetMesgs: [{ maxHeartRate: 196 }],
+  }, p);
+  assert.equal(r.kind, "activity");
+  assert.equal(r.activity.start, "2026-06-05T07:34:00");
+  assert.equal(r.activity.sport, "hike");
+  assert.deepEqual(r.activity.intensitySec, [0, 10, 0]); // 170 bpm = 87 % HFmax → moderat
+  assert.deepEqual(r.profile, { deviceHrMax: 196, sex: "male", weightKg: 90 });
+  const hiit = parseFitMessages({ sessionMesgs: [{ startTime: new Date("2026-05-30T19:03:11Z"), sport: "generic", sportProfileName: "HiiT", totalTimerTime: 425 }] }, p);
+  assert.equal(hiit.activity.sport, "hiit");
+});

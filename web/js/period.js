@@ -49,7 +49,9 @@ export function summarize(data, a, mode, anchor) {
       date,
       future,
       steps: d.steps ?? null,
-      calories: d.calories ?? null,
+      // Ohne Tageswerte der Uhr: Kalorien der aufgezeichneten Trainingseinheiten
+      calories: d.calories ?? (dayActs.some((x) => x.calories) ? sum(dayActs.map((x) => x.calories || 0)) : null),
+      caloriesFromTraining: d.calories == null && dayActs.some((x) => x.calories),
       activeCalories: d.activeCalories ?? null,
       distanceKm: d.distanceKm ?? null,
       trainingMin: future ? null : sum(dayActs.map((x) => (x.durationSec || 0) / 60)),
@@ -83,6 +85,7 @@ export function summarize(data, a, mode, anchor) {
     stepsAvg: vals("steps").length ? mean(vals("steps")) : null,
     stepGoal: stepGoal * (mode === "day" ? 1 : past.length || 1),
     calories: vals("calories").length ? sum(vals("calories")) : null,
+    caloriesTrainingOnly: past.some((d) => d.caloriesFromTraining) && !past.some((d) => d.calories != null && !d.caloriesFromTraining),
     activeCalories: vals("activeCalories").length ? sum(vals("activeCalories")) : null,
     distanceKm: vals("distanceKm").length ? sum(vals("distanceKm")) : null,
     trainingMin: sum(vals("trainingMin")),

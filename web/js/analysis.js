@@ -18,6 +18,8 @@ export const SPORTS = {
   strength: "Kraft",
   mobility: "Mobilität",
   walk: "Gehen",
+  hike: "Wandern",
+  hiit: "HIIT",
   other: "Sonstiges",
   rest: "Pause",
 };
@@ -66,7 +68,7 @@ export function estimateHrMax(age) {
 
 export function resolveProfile(profile = {}, daily = []) {
   const rhr = daily.slice(-14).map((d) => d.restingHr).filter(Boolean);
-  const hrMax = profile.hrMax || profile.observedHrMax || (profile.age ? estimateHrMax(profile.age) : 190);
+  const hrMax = profile.hrMax || profile.deviceHrMax || profile.observedHrMax || (profile.age ? estimateHrMax(profile.age) : 190);
   const hrRest = profile.hrRest || (rhr.length ? Math.round(mean(rhr)) : 60);
   return {
     sex: "male",
@@ -75,7 +77,7 @@ export function resolveProfile(profile = {}, daily = []) {
     ...profile,
     hrMax,
     hrRest,
-    hrMaxSource: profile.hrMax ? "manuell" : profile.observedHrMax ? "gemessen" : "Tanaka-Formel",
+    hrMaxSource: profile.hrMax ? "manuell" : profile.deviceHrMax ? "Einstellung der Uhr" : profile.observedHrMax ? "gemessen" : "Tanaka-Formel",
   };
 }
 

@@ -29,8 +29,8 @@ SPORT_MAP = {
     "cycling": "bike", "road_biking": "bike", "mountain_biking": "bike", "gravel_cycling": "bike",
     "indoor_cycling": "bike", "virtual_ride": "bike",
     "lap_swimming": "swim", "open_water_swimming": "swim",
-    "strength_training": "strength", "hiit": "strength",
-    "walking": "walk", "hiking": "walk",
+    "strength_training": "strength", "hiit": "hiit",
+    "walking": "walk", "hiking": "hike",
     "yoga": "mobility", "pilates": "mobility",
 }
 
